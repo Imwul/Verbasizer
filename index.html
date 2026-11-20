@@ -4,10 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#f5f5ed">
-  <meta name="description" content="한 글 또는 두 글을 어절, 구절, 줄 단위로 잘라 섞는 한국어 컷업 작업실">
+  <meta name="description" content="한 글 또는 두 글을 잘라 섞고, 마음에 든 구절을 골라 다듬는 한국어 컷업 작업실">
   <title>Verbasizer 한국어판</title>
   <link rel="stylesheet" href="styles.css">
   <script src="cutup.js" defer></script>
+  <script src="smoothing.js" defer></script>
   <script src="app.js" defer></script>
 </head>
 <body>
@@ -76,6 +77,7 @@
                 <label><input type="radio" name="mode" value="word"><span>어절</span></label>
                 <label><input type="radio" name="mode" value="phrase" checked><span>구절</span></label>
                 <label><input type="radio" name="mode" value="line"><span>줄</span></label>
+                <label><input type="radio" name="mode" value="manual"><span>직접</span></label>
               </div>
             </fieldset>
             <div class="line-settings">
@@ -99,6 +101,38 @@
             </div>
           </div>
           <p id="unit-help" class="unit-help">한 문장 안에서 이어지는 짧은 구절을 섞어요.</p>
+          <details class="mix-options">
+            <summary>섞기 설정</summary>
+            <div class="mix-option-fields">
+              <div class="option-field">
+                <label for="mix-strategy">배치 방식</label>
+                <div class="select-box">
+                  <select id="mix-strategy">
+                    <option value="default">무작위로 섞기</option>
+                    <option value="alternate">두 글을 번갈아</option>
+                    <option value="ordered">원문 순서</option>
+                  </select>
+                </div>
+              </div>
+              <div class="option-field">
+                <label for="target-syllables">한 줄 목표 음절</label>
+                <input id="target-syllables" type="number" min="1" max="100" step="1" inputmode="numeric" placeholder="지정 안 함">
+              </div>
+              <div id="ratio-settings" class="ratio-settings" hidden>
+                <label class="check-label">
+                  <input id="ratio-enabled" type="checkbox" aria-controls="ratio-controls">
+                  두 글의 비율 지정
+                </label>
+                <div id="ratio-controls" class="range-field" hidden>
+                  <div class="range-label">
+                    <label for="source-ratio">첫 번째 원문 비율</label>
+                    <span id="ratio-value">50 : 50</span>
+                  </div>
+                  <input id="source-ratio" type="range" min="0" max="100" value="50">
+                </div>
+              </div>
+            </div>
+          </details>
           <p id="sources-help" class="sources-help" hidden>두 원문에 글을 넣으면 함께 섞을 수 있어요.</p>
           <button id="mix-button" class="mix-button" type="submit">
             <span class="mix-icon" aria-hidden="true"><i></i><i></i><i></i></span>
@@ -109,10 +143,32 @@
         <section class="panel output-panel" aria-labelledby="output-title">
           <div class="panel-header">
             <h2 id="output-title">섞은 글</h2>
-            <button id="copy-button" class="copy-button" type="button" disabled>결과 복사</button>
+            <div class="output-actions">
+              <button id="compare-button" class="copy-button" type="button" aria-haspopup="dialog" disabled>후보 3개 비교</button>
+              <button id="copy-button" class="copy-button" type="button" disabled>결과 복사</button>
+            </div>
+          </div>
+          <div class="result-settings">
+            <div class="range-field">
+              <div class="range-label">
+                <label for="strength">보정 강도</label>
+                <span id="strength-value">0%</span>
+              </div>
+              <input id="strength" type="range" min="0" max="100" value="0" aria-describedby="strength-help">
+              <p id="strength-help" class="field-help">강도를 높이면 문장부호, 조사, 어순을 차례로 다듬어요.</p>
+              <p id="strength-status" class="field-help strength-status" role="status" hidden></p>
+            </div>
+            <div class="origin-settings">
+              <label class="check-label"><input id="show-origins" type="checkbox"> 출처 색으로 보기</label>
+              <ul id="source-legend" class="source-legend" hidden>
+                <li class="source-1"><span class="origin-swatch" aria-hidden="true"></span>첫 번째 원문</li>
+                <li class="source-2"><span class="origin-swatch" aria-hidden="true"></span>두 번째 원문</li>
+              </ul>
+            </div>
           </div>
           <div class="result-sheet">
             <p id="empty-result" class="empty-result">원문을 넣고 잘라 섞으면 여기에 결과가 나와요.</p>
+            <p id="result-help" class="field-help result-help" hidden>줄을 펼쳐 잠그거나 편집하고, 마음에 드는 줄을 모아 두세요.</p>
             <div id="result" class="result" hidden></div>
           </div>
           <div class="output-footer">
@@ -123,9 +179,31 @@
 
       <div class="studio-footer">
         <p id="notice" class="notice" role="status"></p>
-        <p class="shortcut"><kbd>Ctrl</kbd> / <kbd>⌘</kbd> + <kbd>Enter</kbd>로 섞기</p>
+        <div class="footer-details">
+          <p id="storage-status" class="storage-status"></p>
+          <p class="shortcut"><kbd>Ctrl</kbd> / <kbd>⌘</kbd> + <kbd>Enter</kbd>로 섞기</p>
+        </div>
       </div>
+
+      <section id="collection" class="panel collection-panel" aria-labelledby="collection-title">
+        <div class="panel-header">
+          <h2 id="collection-title">모은 줄</h2>
+          <button id="copy-collection" class="copy-button" type="button" disabled>모은 글 복사</button>
+        </div>
+        <p id="collection-empty" class="field-help">섞은 글을 펼치고 ‘줄 모으기’를 눌러 여기에 담으세요.</p>
+        <ol id="collection-items" class="collection-items"></ol>
+      </section>
     </main>
   </div>
+
+  <dialog id="compare-dialog" class="compare-dialog" aria-labelledby="compare-title">
+    <div class="panel-header">
+      <h2 id="compare-title">후보 3개 비교</h2>
+      <form method="dialog">
+        <button class="copy-button" type="submit">닫기</button>
+      </form>
+    </div>
+    <div id="compare-candidates" class="compare-candidates"></div>
+  </dialog>
 </body>
 </html>
