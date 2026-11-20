@@ -10,6 +10,15 @@
     '돌아가는 길에 나는 처음 듣는 노래를 흥얼거렸다.',
   ].join('\n');
 
+  const secondSample = [
+    '관측소는 새벽 세 시에 첫 파도를 기록했다.',
+    '기압이 떨어지자 해안의 풍향이 바뀌었다.',
+    '작은 배 한 척이 등대 앞에서 속도를 줄였다.',
+    '섬의 남쪽에는 모래가 한 겹 더 쌓였다.',
+    '밀물이 들어오기까지 아직 두 시간이 남았다.',
+    '기록의 마지막 칸에는 수온만 적혀 있었다.',
+  ].join('\n');
+
   const unitHelp = {
     word: '조사와 어미를 붙인 채로 띄어쓰기 단위로 섞어요.',
     phrase: '한 문장 안에서 이어지는 짧은 구절을 섞어요.',
@@ -17,13 +26,24 @@
   };
 
   const form = document.querySelector('#studio-form');
-  const source = document.querySelector('#source');
-  const sourceCount = document.querySelector('#source-count');
+  const first = {
+    field: document.querySelector('#source'),
+    count: document.querySelector('#source-count'),
+    clear: document.querySelector('#clear-button'),
+  };
+  const second = {
+    field: document.querySelector('#second-source'),
+    count: document.querySelector('#second-source-count'),
+    clear: document.querySelector('#clear-second-button'),
+  };
+  const sourceLabel = document.querySelector('#source-label');
+  const secondGroup = document.querySelector('#second-source-group');
+  const toggleSource = document.querySelector('#toggle-source');
   const sampleButton = document.querySelector('#sample-button');
-  const clearButton = document.querySelector('#clear-button');
   const mixButton = document.querySelector('#mix-button');
   const copyButton = document.querySelector('#copy-button');
   const help = document.querySelector('#unit-help');
+  const sourcesHelp = document.querySelector('#sources-help');
   const emptyResult = document.querySelector('#empty-result');
   const result = document.querySelector('#result');
   const resultCount = document.querySelector('#result-count');
@@ -31,10 +51,14 @@
   const numberFormat = new Intl.NumberFormat('ko-KR');
   let resultText = '';
 
-  function updateSource() {
-    sourceCount.textContent = numberFormat.format(Array.from(source.value).length) + '자';
-    clearButton.disabled = source.value.length === 0;
-    mixButton.disabled = source.value.trim().length === 0;
+  function updateSources() {
+    for (const { field, count, clear } of [first, second]) {
+      count.textContent = numberFormat.format(Array.from(field.value).length) + '자';
+      clear.disabled = field.value.length === 0;
+    }
+    const dualSources = !secondGroup.hidden;
+    mixButton.disabled = !first.field.value.trim() || (dualSources && !second.field.value.trim());
+    sourcesHelp.hidden = !dualSources || !mixButton.disabled;
     notice.textContent = '';
   }
 
@@ -53,15 +77,22 @@
   }
 
   function mixSource(announce = true) {
-    const fragments = window.Verbasizer.split(source.value, form.elements.mode.value);
-    const lines = window.Verbasizer.mix(fragments, {
-      lineCount: Number(form.elements.lineCount.value),
-    });
+    const { split, mix, mixSources } = window.Verbasizer;
+    const mode = form.elements.mode.value;
+    const options = { lineCount: Number(form.elements.lineCount.value) };
+    const fragments = split(first.field.value, mode);
+    const dualSources = !secondGroup.hidden;
+    const lines = dualSources
+      ? mixSources(fragments, split(second.field.value, mode), options)
+      : mix(fragments, options);
     renderResult(lines);
-    if (announce) {
-      notice.textContent = fragments.some((fragment) => fragment !== fragments[0])
-        ? lines.length + '줄로 섞었어요.'
-        : '글을 더 넣거나 자를 단위를 바꾸면 섞을 수 있어요.';
+    if (!announce) return;
+    if (dualSources) {
+      notice.textContent = '두 글을 ' + lines.length + '줄로 섞었어요.';
+    } else if (fragments.some((fragment) => fragment !== fragments[0])) {
+      notice.textContent = lines.length + '줄로 섞었어요.';
+    } else {
+      notice.textContent = '글을 더 넣거나 자를 단위를 바꾸면 섞을 수 있어요.';
     }
   }
 
@@ -108,7 +139,16 @@
     notice.textContent = '선택된 글을 복사해 주세요.';
   }
 
-  source.addEventListener('input', updateSource);
+  for (const { field, clear } of [first, second]) {
+    field.addEventListener('input', updateSources);
+    clear.addEventListener('click', () => {
+      field.value = '';
+      updateSources();
+      renderResult([]);
+      field.focus();
+    });
+  }
+
   form.addEventListener('change', () => {
     help.textContent = unitHelp[form.elements.mode.value];
   });
@@ -123,20 +163,27 @@
     }
   });
 
-  sampleButton.addEventListener('click', () => {
-    source.value = sample;
-    updateSource();
-    mixSource();
+  toggleSource.addEventListener('click', () => {
+    const expanded = secondGroup.hidden;
+    secondGroup.hidden = !expanded;
+    form.classList.toggle('dual-sources', expanded);
+    sourceLabel.classList.toggle('visually-hidden', !expanded);
+    sourceLabel.textContent = expanded ? '첫 번째 원문' : '원문';
+    toggleSource.setAttribute('aria-expanded', String(expanded));
+    toggleSource.textContent = expanded ? '한 글 섞기' : '두 글 섞기';
+    updateSources();
+    if (expanded) second.field.focus();
   });
-  clearButton.addEventListener('click', () => {
-    source.value = '';
-    updateSource();
-    renderResult([]);
-    source.focus();
+
+  sampleButton.addEventListener('click', () => {
+    first.field.value = sample;
+    if (!secondGroup.hidden) second.field.value = secondSample;
+    updateSources();
+    mixSource();
   });
   copyButton.addEventListener('click', copyResult);
 
-  source.value = sample;
-  updateSource();
+  first.field.value = sample;
+  updateSources();
   mixSource(false);
 })();

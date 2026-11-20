@@ -24,11 +24,13 @@
   }
 
   function groupLines(fragments, count) {
-    return Array.from({ length: count }, (_, index) => {
-      const start = Math.floor(index * fragments.length / count);
-      const end = Math.floor((index + 1) * fragments.length / count);
-      return fragments.slice(start, end).join(' ');
-    });
+    return Array.from({ length: count }, (_, index) => takeLine(fragments, count, index).join(' '));
+  }
+
+  function takeLine(fragments, count, index) {
+    const start = Math.floor(index * fragments.length / count);
+    const end = Math.floor((index + 1) * fragments.length / count);
+    return fragments.slice(start, end);
   }
 
   function split(text, mode = 'phrase') {
@@ -41,7 +43,7 @@
     return sentences.flatMap(mode === 'word' ? splitWords : splitPhrases);
   }
 
-  function mix(fragments, { lineCount = 6, randomness = Math.random } = {}) {
+  function shuffle(fragments, randomness) {
     const shuffled = [...fragments];
 
     for (let index = shuffled.length - 1; index > 0; index -= 1) {
@@ -56,10 +58,46 @@
       }
     }
 
-    const requestedCount = Number(lineCount);
-    const count = Number.isFinite(requestedCount) ? Math.max(1, Math.floor(requestedCount)) : 6;
-    return groupLines(shuffled, Math.min(shuffled.length, count));
+    return shuffled;
   }
 
-  globalThis.Verbasizer = Object.freeze({ split, mix });
+  function normalizeLineCount(lineCount) {
+    const count = Number(lineCount);
+    return Number.isFinite(count) ? Math.max(1, Math.floor(count)) : 6;
+  }
+
+  function mix(fragments, { lineCount = 6, randomness = Math.random } = {}) {
+    const shuffled = shuffle(fragments, randomness);
+    return groupLines(shuffled, Math.min(shuffled.length, normalizeLineCount(lineCount)));
+  }
+
+  function interleave(first, second) {
+    const line = [];
+    const length = Math.max(first.length, second.length);
+    for (let index = 0; index < length; index += 1) {
+      if (index < first.length) line.push(first[index]);
+      if (index < second.length) line.push(second[index]);
+    }
+    return line.join(' ');
+  }
+
+  function mixSources(firstFragments, secondFragments, { lineCount = 6, randomness = Math.random } = {}) {
+    if (!firstFragments.length || !secondFragments.length) {
+      return mix(firstFragments.length ? firstFragments : secondFragments, { lineCount, randomness });
+    }
+
+    const first = shuffle(firstFragments, randomness);
+    const second = shuffle(secondFragments, randomness);
+    const count = Math.min(Math.max(first.length, second.length), normalizeLineCount(lineCount));
+
+    return Array.from({ length: count }, (_, index) => {
+      // The last group has fragments from both sources even when one source is very short.
+      const lineIndex = count - 1 - index;
+      const left = takeLine(first, count, lineIndex);
+      const right = takeLine(second, count, lineIndex);
+      return randomness() < 0.5 ? interleave(left, right) : interleave(right, left);
+    });
+  }
+
+  globalThis.Verbasizer = Object.freeze({ split, mix, mixSources });
 })();

@@ -225,6 +225,29 @@ button:focus-visible, a:focus-visible, select:focus-visible, textarea:focus-visi
   letter-spacing: -.045em;
 }
 
+.source-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 4px 10px;
+}
+
+.source-toggle {
+  min-height: 35px;
+  padding: 6px 10px;
+  border: 1px solid #c9d997;
+  border-radius: 8px;
+  background: var(--lime);
+  color: var(--ink);
+  font-size: .875rem;
+  font-weight: 720;
+}
+
+.source-toggle:hover { background: #d6e99b; }
+.source-toggle[aria-expanded="true"] { border-color: var(--rule); background: var(--lilac); }
+.source-toggle[aria-expanded="true"]:hover { background: #e1dbf4; }
+
 .text-button {
   min-height: 36px;
   padding: 5px 0;
@@ -238,6 +261,22 @@ button:focus-visible, a:focus-visible, select:focus-visible, textarea:focus-visi
 .text-button:enabled:hover { text-decoration: underline; text-underline-offset: .2em; }
 .text-button:disabled { opacity: .55; }
 
+.source-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+}
+
+.source-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: .875rem;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.source-label.visually-hidden { margin: -1px; }
+
 .source-box {
   display: flex;
   flex-direction: column;
@@ -245,6 +284,8 @@ button:focus-visible, a:focus-visible, select:focus-visible, textarea:focus-visi
   border-radius: 11px;
   background: #f8f8f2;
 }
+
+#second-source-group .source-box { background: #f2effa; }
 
 .source-box:focus-within { border-color: var(--violet); }
 
@@ -375,6 +416,13 @@ button:focus-visible, a:focus-visible, select:focus-visible, textarea:focus-visi
   word-break: keep-all;
 }
 
+.sources-help {
+  margin: -7px 0 12px;
+  color: var(--muted);
+  font-size: .875rem;
+  line-height: 1.4;
+}
+
 .mix-button {
   display: flex;
   min-height: 49px;
@@ -452,6 +500,10 @@ button:focus-visible, a:focus-visible, select:focus-visible, textarea:focus-visi
   border: 1px solid #d3cfdf;
   border-radius: 4px;
   font: inherit;
+}
+
+@media (min-width: 1000px) {
+  .dual-sources .source-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 900px) {
