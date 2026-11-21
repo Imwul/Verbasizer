@@ -18,6 +18,13 @@
   const sentenceMark = /[.!?…。！？]["'”’」』)\]]*$/u;
   const completedPredicate = /^(?:[가-힣]*(?:았|었|였|했|됐|났|왔|갔|렀|렸|췄|쳤|켰|웠|혔|뒀|겼)다|있다|없다|된다|같다)[.。]$/u;
   const relativePlaces = new Set(['속', '안', '앞', '뒤', '밖', '옆', '곁', '위', '아래', '사이', '근처', '길', '동쪽', '서쪽', '남쪽', '북쪽', '칸']);
+  const relativeParticles = ['에서는', '에는', '에서', '에', '으로', '로'];
+  const negativeAuxiliary = /^(?:않(?:[가-힣]*[다요고면며지게아어죠]|[은을])|못(?:하|했)[가-힣]+|말(?:았[가-힣]+|[자다고게라])|마(?:라|세요|십시오)?)[.!?…。！？]*$/u;
+  const aspectAuxiliary = /^(?:있다|있었다|갔다|왔다|놓았다|두었다|버렸다)[.!?…。！？]*$/u;
+  const connective = /^(?:[가-힣]+[아어여]|해)$/u;
+  const durationWords = /^(?:한참|잠깐|잠시|오랜|얼마|며칠|반나절|하루|이틀|사흘|나흘|한나절|종일|\d+(?:초|분|시간|일|개월|달|년|주))$/u;
+  const durationUnit = /^(?:초|분|시간|일|개월|달|년|주일|주)$/u;
+  const durationCount = /^(?:\d+|몇|한|두|세|네|다섯|여섯|일곱|여덟|아홉|열|스무)$/u;
   const particlePairs = [
     ['으로', '로'], ['은', '는'], ['이', '가'], ['을', '를'], ['과', '와'],
   ];
@@ -89,6 +96,191 @@
       end: match.index + match[0].length,
       word: match[0],
     })));
+  }
+
+  function wordsIn(text) {
+    return text.match(/\S+/gu) ?? [];
+  }
+
+  function durationEnding(words) {
+    const last = words.at(-1);
+    if (durationWords.test(last)) return [last];
+    const count = words.at(-2);
+    return durationUnit.test(last) && durationCount.test(count) ? [count, last] : [];
+  }
+
+  function sourceConnections(piece, strength) {
+    const before = piece.origin?.before ?? [];
+    const after = piece.origin?.after ?? [];
+    const words = wordsIn(piece.text);
+    const last = words.at(-1);
+    const connections = [];
+    if (/^[가-힣]+지$/u.test(last) && negativeAuxiliary.test(after[0])) {
+      connections.push({ words: [after[0]], side: 1, priority: 0, accept: (tokens) => negativeAuxiliary.test(tokens[0]) });
+    } else if (strength >= 80 && connective.test(last) && aspectAuxiliary.test(after[0])) {
+      connections.push({ words: [after[0]], side: 1, priority: 3, accept: (tokens) => aspectAuxiliary.test(tokens[0]) });
+    }
+    if (words[0] === '동안') {
+      const duration = durationEnding(before);
+      if (duration.length) connections.push({ words: duration, side: -1, priority: 1, accept: (tokens) => durationEnding(tokens).length > 0 });
+    }
+    if (strength >= 75 && /^[가-힣]{2,}$/u.test(last) && !isModifier(last)
+      && nounWithParticle(after[0] ?? '', relativePlaces, relativeParticles)) {
+      connections.push({
+        words: [after[0]],
+        side: 1,
+        priority: 2,
+        accept: (tokens) => !!nounWithParticle(tokens[0] ?? '', relativePlaces, relativeParticles),
+      });
+    }
+    return connections;
+  }
+
+  function indexConnections(pieces) {
+    const positions = new Map();
+    const owners = new Map();
+    for (const [index, piece] of pieces.entries()) {
+      positions.set(piece, index);
+      const words = wordsIn(piece.text);
+      for (const [position, word] of words.entries()) {
+        const twoWords = words[position + 1] ? word + ' ' + words[position + 1] : null;
+        for (const text of twoWords ? [word, twoWords] : [word]) {
+          if (!owners.has(text)) owners.set(text, piece);
+          else if (owners.get(text) !== piece) owners.set(text, null);
+        }
+      }
+    }
+    return { positions, owners };
+  }
+
+  function reconnect(pieces, piece, connection, index) {
+    const { words, side, accept } = connection;
+    const originIndex = index.positions.get(piece);
+    const nearbyPieces = side === 1 ? pieces.slice(originIndex + 1, originIndex + 1 + words.length)
+      : pieces.slice(Math.max(0, originIndex - words.length), originIndex);
+    const nearby = nearbyPieces.flatMap((part) => wordsIn(part.text));
+    if (accept(nearby)) return null;
+
+    const text = words.join(' ');
+    const donor = index.owners.get(text);
+    const completesSentence = side === 1 && sentenceMark.test(text);
+    if (donor && donor !== piece && donor.source === piece.source && donor.text === text) {
+      const donorIndex = index.positions.get(donor);
+      const connected = pieces[donorIndex - side];
+      const existing = side === 1 ? connected?.origin?.after?.slice(0, words.length)
+        : connected?.origin?.before?.slice(-words.length);
+      if (connected !== piece && existing?.join(' ') === text) return null;
+      const span = pieces.slice(Math.min(originIndex, donorIndex), Math.max(originIndex, donorIndex) + 1);
+      if (span.some((part) => part.locked || part.joinLeft)
+        || span.slice(1, -1).some(isTerminal)) return null;
+      pieces.splice(donorIndex, 1);
+      pieces.splice(pieces.indexOf(piece) + Number(side === 1), 0, donor);
+      return {
+        note: `원문을 참고해 ‘${text}’ 조각을 이어 붙였어요.`,
+        end: completesSentence ? [piece, donor] : null,
+      };
+    }
+    if (index.owners.has(text)) return null;
+    // Require a concrete source continuation and avoid adding a fragment next to a lock.
+    if (pieces[originIndex + side]?.locked || piece.joinLeft) return null;
+    piece.text = side === 1 ? `${piece.text} ${text}` : `${text} ${piece.text}`;
+    return { note: `원문을 참고해 ‘${text}’ 조각을 복원했어요.`, end: completesSentence ? [piece] : null };
+  }
+
+  function isTerminal(piece) {
+    return wordsIn(piece.text).some((word) => sentenceMark.test(word) || completedPredicate.test(word + '.'));
+  }
+
+  function completeAtEnd(pieces, end) {
+    const index = pieces.indexOf(end[0]);
+    if (index + end.length === pieces.length || pieces.some((piece) => !end.includes(piece) && isTerminal(piece))) return false;
+    if (pieces.slice(index).some((piece) => piece.locked || piece.joinLeft)) return false;
+    if (end.some((piece, offset) => pieces[index + offset] !== piece)) return false;
+    if (end.flatMap((piece) => wordsIn(piece.text)).slice(0, -1).some((word) => sentenceMark.test(word))) return false;
+    pieces.push(...pieces.splice(index, end.length));
+    return true;
+  }
+
+  function reorderSourceLocation(pieces) {
+    for (let index = 1; index < pieces.length; index += 1) {
+      const action = pieces[index - 1];
+      const location = pieces[index];
+      if (action.locked || location.locked || action.joinLeft || location.joinLeft || pieces[index + 1]?.joinLeft) continue;
+      const expected = action.origin?.before?.at(-1);
+      const following = location.origin?.after ?? [];
+      if (!expected || !nounWithParticle(expected, relativePlaces, relativeParticles)) continue;
+      if (wordsIn(location.text).at(-1) !== expected || location.source !== action.source) continue;
+      if (!connective.test(action.text) || !following.slice(0, 2).includes(action.text)) continue;
+      [pieces[index - 1], pieces[index]] = [location, action];
+      return true;
+    }
+    return false;
+  }
+
+  function sourceAligned(left, right) {
+    const after = left?.origin?.after ?? [];
+    const before = right?.origin?.before ?? [];
+    if (left?.source !== right?.source || !after.length || !before.length) return false;
+    const head = wordsIn(right.text).slice(0, after.length);
+    const tail = wordsIn(left.text).slice(-before.length);
+    return head.length > 0 && tail.length > 0
+      && head.every((word, index) => word === after[index])
+      && tail.every((word, index) => word === before[before.length - tail.length + index]);
+  }
+
+  function reorderSourcePair(pieces) {
+    for (let index = 1; index < pieces.length; index += 1) {
+      const left = pieces[index - 1];
+      const right = pieces[index];
+      if (left.locked || right.locked || left.joinLeft || right.joinLeft || pieces[index + 1]?.joinLeft) continue;
+      if (!sourceAligned(right, left) || isTerminal(right)) continue;
+      if (sourceAligned(pieces[index - 2], left) || sourceAligned(right, pieces[index + 1])) continue;
+      [pieces[index - 1], pieces[index]] = [right, left];
+      return true;
+    }
+    return false;
+  }
+
+  function restoreConnections(pieces, strength, edits) {
+    let remaining = strength >= 85 ? 3 : strength >= 75 ? 2 : 1;
+    const candidates = pieces.filter((piece) => !piece.locked && piece.origin)
+      .flatMap((piece) => sourceConnections(piece, strength).map((connection) => ({ piece, connection })))
+      .sort((first, second) => first.connection.priority - second.connection.priority);
+    let end = null;
+    let index = null;
+    for (const { piece, connection } of candidates) {
+      index ??= indexConnections(pieces);
+      const repair = reconnect(pieces, piece, connection, index);
+      if (!repair) continue;
+      index = null;
+      edits.push(repair.note);
+      end = repair.end ?? end;
+      remaining -= 1;
+      if (!remaining) break;
+    }
+    if (strength >= 85 && end && completeAtEnd(pieces, end)) edits.push('복원한 서술어를 문장 끝에 놓았어요.');
+    if (strength >= 85 && reorderSourceLocation(pieces)) edits.push('원문에서 이어진 장소와 동작을 차례로 놓았어요.');
+    if (strength >= 85 && reorderSourcePair(pieces)) edits.push('원문에서 맞닿았던 구절을 이어 놓았어요.');
+  }
+
+  function clippedSourceClause(pieces) {
+    if (pieces.length < 2) return null;
+    let originals;
+    for (let index = pieces.length - 1; index >= 0; index -= 1) {
+      const piece = pieces[index];
+      const nextPiece = pieces[index + 1];
+      const following = piece.origin?.after ?? [];
+      const last = following.findIndex((word) => sentenceMark.test(word));
+      if (piece.locked || piece.joinLeft || nextPiece?.joinLeft || last === -1 || !/^[가-힣]+[다요까자][.!?。！？]$/u.test(following[last])) continue;
+      if (sourceAligned(piece, nextPiece)) continue;
+      const head = wordsIn(piece.text);
+      if (head.length < 2 || head.length > 4 || head.some((word) => !/^[가-힣]+$/u.test(word))) continue;
+      if (!/^(?:아무도|[가-힣]+(?:은|는|이|가|을|를|인|른|한|진|린|던|하며|내며|마치|처럼|마다|에|에서|까지))$/u.test(head.at(-1))) continue;
+      originals ??= new Set(pieces.flatMap((part) => wordsIn(part.text)));
+      if (originals.has(following[0])) continue;
+      return { piece, continuation: following.slice(0, last + 1).join(' ') };
+    }
+    return null;
   }
 
   function findWords(pieces) {
@@ -230,6 +422,7 @@
     const edits = [];
     const suggestions = [];
     const spacesTidied = tidyPieces(result, strength, edits);
+    if (strength >= 60) restoreConnections(result, strength, edits);
 
     if (strength >= 45) {
       const words = findWords(result);
@@ -254,6 +447,18 @@
         } else if (tail) {
           attachTail(result, tail);
           edits.push(`‘${tail.label}’ 구절을 문장 앞으로 옮겼어요.`);
+        }
+      }
+    }
+
+    if (strength >= 85) {
+      const clause = clippedSourceClause(result);
+      if (clause) {
+        if (applySuggestions) {
+          clause.piece.text += ' ' + clause.continuation;
+          edits.push(`원문의 ‘${clause.continuation}’ 구절로 문장을 마무리했어요.`);
+        } else {
+          suggestions.push(`원문의 ‘${clause.continuation}’ 구절을 이어 문장 마무리`);
         }
       }
     }

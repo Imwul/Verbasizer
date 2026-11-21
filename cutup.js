@@ -5,6 +5,7 @@
     ? new Intl.Segmenter('ko', { granularity: 'sentence' })
     : null;
   const lineBreak = /\r\n|[\n\r\u2028\u2029]/u;
+  const sentenceEnd = /[.!?…。！？]["'”’」』〉》】)\]]*$/u;
 
   function splitWords(text) {
     return text.match(/\S+/gu) ?? [];
@@ -34,15 +35,18 @@
     return fragments.slice(start, end);
   }
 
-  function split(text, mode = 'phrase') {
-    const lines = text.split(lineBreak)
-      .flatMap((line) => mode === 'manual' ? line.split('|') : [line])
-      .map((line) => line.trim())
-      .filter(Boolean);
-
-    if (mode === 'line' || mode === 'manual') return lines;
+  function fragmentGroups(text, mode) {
+    const lines = text.split(lineBreak).map((line) => line.trim()).filter(Boolean);
+    if (mode === 'line') return lines.map((line) => [line]);
+    if (mode === 'manual') {
+      return lines.map((line) => line.split('|').map((part) => part.trim()).filter(Boolean));
+    }
     const sentences = lines.flatMap(splitSentences);
-    return sentences.flatMap(mode === 'word' ? splitWords : splitPhrases);
+    return sentences.map(mode === 'word' ? splitWords : splitPhrases);
+  }
+
+  function split(text, mode = 'phrase') {
+    return fragmentGroups(text, mode).flat();
   }
 
   function shuffle(fragments, randomness, getText = (fragment) => fragment) {
@@ -105,13 +109,85 @@
     return text.normalize('NFC').match(/[가-힣]/gu)?.length ?? 0;
   }
 
+  function surroundingWords(words, start, end, manual) {
+    let contextStart = Math.max(0, start - 3);
+    let contextEnd = Math.min(words.length, end + 3);
+    if (manual) {
+      // Manual fragments can span sentences on the same physical line.
+      for (let index = contextStart; index < start; index += 1) {
+        if (sentenceEnd.test(words[index])) contextStart = index + 1;
+      }
+      for (let index = end - 1; index < contextEnd; index += 1) {
+        if (!sentenceEnd.test(words[index])) continue;
+        contextEnd = index + 1;
+        break;
+      }
+    }
+    return { before: words.slice(contextStart, start), after: words.slice(end, contextEnd) };
+  }
+
   function sourcePieces(text, source, mode) {
     const occurrences = new Map();
-    return split(text, mode).map((fragment) => {
-      const occurrence = occurrences.get(fragment) ?? 0;
-      occurrences.set(fragment, occurrence + 1);
-      return { id: source + ':' + occurrence + ':' + fragment, text: fragment, source };
+    return fragmentGroups(text, mode).flatMap((fragments) => {
+      const wordGroups = fragments.map(splitWords);
+      const words = wordGroups.flat();
+      let start = 0;
+      return fragments.map((fragment, index) => {
+        const occurrence = occurrences.get(fragment) ?? 0;
+        occurrences.set(fragment, occurrence + 1);
+        const end = start + wordGroups[index].length;
+        const origin = surroundingWords(words, start, end, mode === 'manual');
+        start = end;
+        return { id: source + ':' + occurrence + ':' + fragment, text: fragment, source, origin };
+      });
     });
+  }
+
+  function restoreOrigins(rows, sources, mode = 'phrase') {
+    const caches = sources.map((text) => typeof text === 'string' ? new Map() : null);
+    const modes = [...new Set([mode, 'phrase', 'word', 'manual', 'line'])];
+
+    function indexSource(source, splitMode) {
+      const cache = caches[source];
+      if (!cache.has(splitMode)) {
+        const byId = new Map();
+        const uniqueText = new Map();
+        for (const piece of sourcePieces(sources[source], source, splitMode)) {
+          byId.set(piece.id, piece);
+          uniqueText.set(piece.text, uniqueText.has(piece.text) ? null : piece.origin);
+        }
+        cache.set(splitMode, { byId, uniqueText });
+      }
+      return cache.get(splitMode);
+    }
+
+    function findOrigin(piece) {
+      if (!caches[piece.source]) return null;
+      let unique = null;
+      for (const splitMode of modes) {
+        const { byId, uniqueText } = indexSource(piece.source, splitMode);
+        const exact = byId.get(piece.id);
+        if (exact?.text === piece.text) return exact.origin;
+        unique ??= uniqueText.get(piece.text);
+      }
+      return unique;
+    }
+
+    let changed = false;
+    const restored = rows.map((row) => {
+      let pieces;
+      for (const [index, piece] of row.pieces.entries()) {
+        if (piece.origin) continue;
+        const origin = findOrigin(piece);
+        if (!origin) continue;
+        pieces ??= [...row.pieces];
+        pieces[index] = { ...piece, origin };
+      }
+      if (!pieces) return row;
+      changed = true;
+      return { ...row, pieces };
+    });
+    return changed ? restored : rows;
   }
 
   function collectPins(previous) {
@@ -311,5 +387,5 @@
     });
   }
 
-  globalThis.Verbasizer = Object.freeze({ split, mix, mixSources, compose, countSyllables });
+  globalThis.Verbasizer = Object.freeze({ split, mix, mixSources, compose, countSyllables, restoreOrigins });
 })();

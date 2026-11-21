@@ -1,24 +1,7 @@
 (() => {
   'use strict';
 
-  const samples = [
-    [
-      '불이 꺼진 극장에서 우리는 서로의 발소리를 기다렸다.',
-      '새벽의 전광판이 아무도 모르는 이름을 불렀다.',
-      '주머니 속에 접어 둔 바다가 천천히 젖어 갔다.',
-      '마지막 전철은 창문마다 다른 밤을 싣고 달렸다.',
-      '도시는 젖은 성냥처럼 한참 동안 빛나지 않았다.',
-      '돌아가는 길에 나는 처음 듣는 노래를 흥얼거렸다.',
-    ].join('\n'),
-    [
-      '관측소는 새벽 세 시에 첫 파도를 기록했다.',
-      '기압이 떨어지자 해안의 풍향이 바뀌었다.',
-      '작은 배 한 척이 등대 앞에서 속도를 줄였다.',
-      '섬의 남쪽에는 모래가 한 겹 더 쌓였다.',
-      '밀물이 들어오기까지 아직 두 시간이 남았다.',
-      '기록의 마지막 칸에는 수온만 적혀 있었다.',
-    ].join('\n'),
-  ];
+  const samples = window.VerbasizerSamples;
 
   const unitHelp = {
     word: '조사와 어미를 붙인 채로 띄어쓰기 단위로 섞어요.',
@@ -38,6 +21,9 @@
   const secondGroup = byId('second-source-group');
   const toggleSource = byId('toggle-source');
   const sampleButton = byId('sample-button');
+  const sampleDialog = byId('sample-dialog');
+  const sampleForm = byId('sample-form');
+  const sampleChoices = Array.from(sampleForm.querySelectorAll('.sample-choice'));
   const mixButton = byId('mix-button');
   const copyButton = byId('copy-button');
   const help = byId('unit-help');
@@ -68,7 +54,7 @@
   const copyCollection = byId('copy-collection');
   const storageStatus = byId('storage-status');
 
-  const { compose, countSyllables } = window.Verbasizer;
+  const { compose, countSyllables, restoreOrigins, split } = window.Verbasizer;
   const { smooth, joinPieces } = window.VerbasizerSmoothing;
   const numberFormat = new Intl.NumberFormat('ko-KR');
   const storageKey = 'verbasizer-workspace-v1';
@@ -96,6 +82,14 @@
     for (const { field, count, clear } of editors) {
       count.textContent = numberFormat.format(Array.from(field.value).length) + '자';
       clear.disabled = field.value.length === 0;
+      const credit = field.closest('.source-field').querySelector('.source-sample-credit');
+      const sample = samples.find(({ text }) => text === field.value);
+      credit.hidden = !sample;
+      if (sample) {
+        const link = credit.querySelector('a');
+        link.textContent = sample.author + ' · ' + sample.title;
+        link.href = sample.sourceUrl;
+      }
     }
     const dualSources = !secondGroup.hidden;
     const sourcesMissing = !first.field.value.trim() || (dualSources && !second.field.value.trim());
@@ -141,6 +135,11 @@
     if (typeof row.editedText === 'string') {
       return { text: row.editedText, pieces: [], edits: [], suggestions: [] };
     }
+    if (Array.isArray(row.arrangedPieces)) {
+      const locked = new Set(row.pieces.filter((piece) => piece.locked).map((piece) => piece.id));
+      const pieces = row.arrangedPieces.map((piece) => ({ ...piece, locked: locked.has(piece.id) }));
+      return { text: joinPieces(pieces), pieces, edits: [], suggestions: [] };
+    }
     const positioned = row.pieces.filter((piece) => piece.locked && Number.isInteger(piece.pinnedSlot));
     const positionedIds = new Set(positioned.map((piece) => piece.id));
     const ordered = row.pieces.filter((piece) => !positionedIds.has(piece.id));
@@ -168,7 +167,125 @@
     scheduleSave();
   }
 
+  function splitEditedText(text) {
+    return split(text, form.elements.mode.value).map((piece, index) => ({
+      id: 'edited-' + index, text: piece,
+    }));
+  }
+
+  function reorderEditor(draft) {
+    const panel = element('div', 'reorder-editor');
+    const hint = draft.pieces.length > 1
+      ? '조각을 드래그하거나 선택한 뒤 앞·뒤로 옮기세요.'
+      : draft.pieces.length
+        ? '이 줄에는 옮길 조각이 하나뿐이에요.'
+        : '직접 쓰기에 글을 입력한 뒤 조각을 옮길 수 있어요.';
+    const list = element('div', 'reorder-list');
+    list.setAttribute('role', 'group');
+    list.setAttribute('aria-label', '옮길 조각');
+    const controls = element('div', 'row-actions');
+    const announcement = element('p', 'visually-hidden');
+    announcement.setAttribute('role', 'status');
+    let dragging = null;
+
+    function pick(position, focus = false) {
+      draft.selected = position;
+      Array.from(list.children).forEach((chip, index) => {
+        chip.setAttribute('aria-pressed', String(index === position));
+      });
+      earlier.disabled = position <= 0;
+      later.disabled = position >= draft.pieces.length - 1;
+      if (focus) list.children[position]?.focus({ preventScroll: true });
+    }
+
+    function move(from, to) {
+      if (to < 0 || to >= draft.pieces.length || from === to) return;
+      const [piece] = draft.pieces.splice(from, 1);
+      draft.pieces.splice(to, 0, piece);
+      draft.changed = true;
+      draft.text = joinPieces(draft.pieces);
+      draft.selected = to;
+      render();
+      pick(to, true);
+      announcement.textContent = (to + 1) + '번째 위치로 옮겼어요.';
+    }
+
+    function clearTarget() {
+      dragging?.target?.classList.remove('drop-before', 'drop-after');
+    }
+
+    function clearDrag() {
+      clearTarget();
+      dragging?.chip.classList.remove('is-dragging');
+      dragging = null;
+    }
+
+    function attachDrag(chip, position) {
+      chip.addEventListener('pointerdown', (event) => {
+        if (!event.isPrimary || event.button !== 0 || draft.pieces.length < 2) return;
+        chip.setPointerCapture(event.pointerId);
+        dragging = {
+          chip, position, pointer: event.pointerId, x: event.clientX, y: event.clientY,
+          active: false, target: null,
+        };
+      });
+      chip.addEventListener('pointermove', (event) => {
+        if (dragging?.pointer !== event.pointerId) return;
+        if (!dragging.active && Math.hypot(event.clientX - dragging.x, event.clientY - dragging.y) < 5) return;
+        dragging.active = true;
+        chip.classList.add('is-dragging');
+        const hit = document.elementFromPoint(event.clientX, event.clientY)?.closest('.reorder-piece');
+        const target = hit && hit !== chip && list.contains(hit) ? hit : null;
+        if (target === dragging.target) return;
+        clearTarget();
+        dragging.target = target;
+        if (target) {
+          target.classList.add(position < Number(target.dataset.position) ? 'drop-after' : 'drop-before');
+        }
+      });
+      chip.addEventListener('pointerup', (event) => {
+        if (dragging?.pointer !== event.pointerId) return;
+        const target = dragging.target;
+        const active = dragging.active;
+        clearDrag();
+        if (!active) return;
+        event.preventDefault();
+        if (target) move(position, Number(target.dataset.position));
+      });
+      chip.addEventListener('pointercancel', clearDrag);
+      chip.addEventListener('lostpointercapture', clearDrag);
+    }
+
+    function render() {
+      list.replaceChildren(...draft.pieces.map((piece, position) => {
+        const chip = action(piece.text, () => pick(position));
+        chip.classList.add('reorder-piece');
+        if (piece.source !== undefined) chip.classList.add('source-' + (piece.source + 1));
+        chip.dataset.position = position;
+        if (position === draft.selected) chip.dataset.action = 'edit-field';
+        chip.addEventListener('keydown', (event) => {
+          if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+          event.preventDefault();
+          move(position, position + (event.key === 'ArrowLeft' ? -1 : 1));
+        });
+        attachDrag(chip, position);
+        return chip;
+      }));
+      pick(draft.selected);
+    }
+
+    const earlier = action('앞으로', () => move(draft.selected, draft.selected - 1));
+    const later = action('뒤로', () => move(draft.selected, draft.selected + 1));
+    controls.append(earlier, later);
+    if (draft.pieces.length > 1) panel.append(controls);
+    panel.prepend(element('p', 'edit-notes', hint), list);
+    panel.append(announcement);
+    render();
+    return panel;
+  }
+
   function editLine(row, index) {
+    const draft = editDraft;
     const editor = element('form', 'line-editor');
     const field = element('textarea');
     const id = 'edit-line-' + index;
@@ -176,13 +293,31 @@
     field.dataset.action = 'edit-field';
     field.rows = 3;
     field.required = true;
-    field.value = editDraft.text;
+    field.value = draft.text;
     const label = element('label', 'visually-hidden', (index + 1) + '번째 결과 줄 편집');
     label.htmlFor = id;
     field.addEventListener('input', () => {
-      editDraft.text = field.value;
+      draft.text = field.value;
+      draft.typed = true;
+      draft.changed = true;
       field.setCustomValidity('');
     });
+    const modes = element('div', 'editor-modes row-actions');
+    for (const [mode, title] of [['pieces', '조각 옮기기'], ['text', '직접 쓰기']]) {
+      const button = action(title, () => {
+        if (draft.mode === mode) return;
+        if (mode === 'pieces' && draft.typed) {
+          draft.pieces = splitEditedText(draft.text);
+          draft.usesOrigins = false;
+          draft.selected = 0;
+          draft.typed = false;
+        }
+        draft.mode = mode;
+        refreshRow(index, 'edit-field');
+      });
+      button.setAttribute('aria-pressed', String(draft.mode === mode));
+      modes.append(button);
+    }
     const buttons = element('div', 'row-actions');
     const saveButton = element('button', 'row-button', '수정 적용');
     saveButton.type = 'submit';
@@ -192,19 +327,38 @@
     }));
     editor.addEventListener('submit', (event) => {
       event.preventDefault();
-      const text = field.value.trim();
+      const text = (draft.mode === 'text' ? field.value : joinPieces(draft.pieces)).trim();
       if (!text) {
-        field.setCustomValidity('줄에 넣을 글을 입력해 주세요.');
-        field.reportValidity();
+        if (draft.mode === 'text') {
+          field.setCustomValidity('줄에 넣을 글을 입력해 주세요.');
+          field.reportValidity();
+        } else {
+          notice.textContent = '줄에 넣을 글을 입력해 주세요.';
+        }
         return;
       }
-      row.editedText = text.replace(/\r?\n+/g, ' ');
-      row.keepRaw = false;
+      if (draft.changed) {
+        if (draft.usesOrigins && !draft.typed) {
+          delete row.editedText;
+          row.arrangedPieces = draft.pieces;
+          const positions = new Map(draft.pieces.map((piece, position) => [piece.id, position]));
+          for (const piece of row.pieces) {
+            if (piece.locked) piece.pinnedSlot = positions.get(piece.id);
+          }
+        } else {
+          delete row.arrangedPieces;
+          row.editedText = text.replace(/\r?\n+/g, ' ');
+        }
+        row.keepRaw = false;
+      }
       editDraft = null;
       refreshRow(index, 'edit');
-      notice.textContent = '줄을 수정했어요.';
+      if (draft.changed) notice.textContent = '줄을 수정했어요.';
     });
-    editor.append(label, field, buttons);
+    editor.append(modes);
+    if (draft.mode === 'text') editor.append(label, field);
+    else editor.append(reorderEditor(draft));
+    editor.append(buttons);
     return editor;
   }
 
@@ -217,7 +371,13 @@
     }, 'lock-row');
     lock.setAttribute('aria-pressed', String(!!row.locked));
     const edit = action('편집', () => {
-      editDraft = { index, text: view.text };
+      const pieces = view.pieces.length ? [...view.pieces] : splitEditedText(view.text);
+      editDraft = {
+        index, text: view.text, pieces, selected: 0,
+        mode: pieces.length > 1 ? 'pieces' : 'text',
+        usesOrigins: view.pieces.length > 0,
+        typed: false, changed: false,
+      };
       refreshRow(index, 'edit-field');
     }, 'edit');
     controls.append(lock, edit, action('줄 모으기', () => {
@@ -232,9 +392,10 @@
         row.keepRaw = false;
         refreshRow(index, 'restore');
       }, 'restore'));
-    } else if (row.editedText !== undefined || view.edits.length) {
+    } else if (row.editedText !== undefined || row.arrangedPieces || view.edits.length) {
       controls.append(action('섞은 글로 되돌리기', () => {
         delete row.editedText;
+        delete row.arrangedPieces;
         row.keepRaw = true;
         row.applySuggestions = false;
         editDraft = null;
@@ -334,7 +495,10 @@
     if (edited) status.push(edited + '줄 보정');
     if (suggested) status.push('제안 ' + suggested + '줄');
     strengthStatus.hidden = !views.length || Number(strength.value) === 0;
-    const description = status.join(', ') || '이 강도에서 다듬을 부분을 찾지 못했어요.';
+    const fixed = rows.every((row) => row.locked || row.keepRaw || row.editedText !== undefined || row.arrangedPieces);
+    const description = status.join(', ') || (fixed
+      ? '지금 결과는 잠금·직접 편집·되돌리기 상태를 유지하고 있어요.'
+      : '이 강도에서 자동으로 바뀐 줄이 없어요.');
     if (strengthStatus.textContent !== description) strengthStatus.textContent = description;
   }
 
@@ -495,12 +659,13 @@
       const saved = JSON.parse(localStorage.getItem(storageKey));
       if (!Array.isArray(saved?.sources) || typeof saved.sources[0] !== 'string') return false;
       const restoredRows = Array.isArray(saved.rows) ? saved.rows : [];
-      rows = restoredRows.filter((row) => Array.isArray(row?.pieces) && row.pieces.every((piece) =>
+      const validRows = restoredRows.filter((row) => Array.isArray(row?.pieces) && row.pieces.every((piece) =>
         typeof piece?.id === 'string' && typeof piece.text === 'string' && [0, 1].includes(piece.source)));
       savedLines = Array.isArray(saved.savedLines) ? saved.savedLines.filter((text) => typeof text === 'string') : [];
 
       first.field.value = saved.sources[0];
       second.field.value = typeof saved.sources[1] === 'string' ? saved.sources[1] : '';
+      rows = restoreOrigins(validRows, editors.map(({ field }) => field.value), saved.mode);
       if (Object.hasOwn(unitHelp, saved.mode)) form.elements.mode.value = saved.mode;
       if (Array.from(form.elements.lineCount.options, (option) => option.value).includes(saved.lineCount)) {
         form.elements.lineCount.value = saved.lineCount;
@@ -554,7 +719,8 @@
   });
   document.addEventListener('keydown', (event) => {
     if (event.key !== 'Enter' || !(event.metaKey || event.ctrlKey) || event.isComposing
-      || compareDialog.open || event.target.closest?.('.line-editor') || mixButton.disabled) return;
+      || compareDialog.open || sampleDialog.open
+      || event.target.closest?.('.line-editor') || mixButton.disabled) return;
     event.preventDefault();
     form.requestSubmit();
   });
@@ -576,10 +742,39 @@
     if (expanded) second.field.focus();
     scheduleSave();
   });
+  function previewSample(choice) {
+    const sample = samples[Number(choice.querySelector('select').value)];
+    choice.querySelector('.sample-excerpt').textContent = sample.text;
+    choice.querySelector('.sample-credit').textContent = sample.credit;
+    choice.querySelector('.sample-source').href = sample.sourceUrl;
+  }
+
+  sampleChoices.forEach((choice, index) => {
+    const select = choice.querySelector('select');
+    select.append(...samples.map((sample, position) => {
+      const option = element('option', '', sample.author + ' · ' + sample.title);
+      option.value = position;
+      return option;
+    }));
+    select.selectedIndex = index;
+    select.addEventListener('change', () => previewSample(choice));
+  });
   sampleButton.addEventListener('click', () => {
-    first.field.value = samples[0];
-    if (!secondGroup.hidden) second.field.value = samples[1];
+    sampleChoices[1].hidden = secondGroup.hidden;
+    for (const [index, choice] of sampleChoices.entries()) {
+      const match = samples.findIndex(({ text }) => text === editors[index].field.value);
+      if (match !== -1) choice.querySelector('select').selectedIndex = match;
+      previewSample(choice);
+    }
+    sampleDialog.showModal();
+  });
+  sampleForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    for (const [index, choice] of sampleChoices.entries()) {
+      if (!choice.hidden) editors[index].field.value = samples[Number(choice.querySelector('select').value)].text;
+    }
     updateInputs();
+    sampleDialog.close();
     showRows(makeRows(mixOptions()));
   });
   copyButton.addEventListener('click', () => {
@@ -593,7 +788,7 @@
   });
 
   if (!restoreWork()) {
-    first.field.value = samples[0];
+    first.field.value = samples[0].text;
     updateInputs();
     rows = makeRows(mixOptions());
   }

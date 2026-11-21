@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="styles.css">
   <script src="cutup.js" defer></script>
   <script src="smoothing.js" defer></script>
+  <script src="samples.js" defer></script>
   <script src="app.js" defer></script>
 </head>
 <body>
@@ -30,10 +31,10 @@
         </div>
         <div class="paper-art" aria-hidden="true">
           <div class="paper-guide"></div>
-          <span class="strip strip-first">서로의 발소리를</span>
-          <span class="strip strip-second">기다렸다</span>
-          <span class="strip strip-third">불이 꺼진 극장에서</span>
-          <span class="strip strip-fourth">우리는</span>
+          <span class="strip strip-first">그윽한 향기가</span>
+          <span class="strip strip-second">가득했다</span>
+          <span class="strip strip-third">온갖 빛깔의 꽃이</span>
+          <span class="strip strip-fourth">공기에</span>
         </div>
       </section>
 
@@ -42,7 +43,7 @@
           <div class="panel-header">
             <h2 id="source-title">원문</h2>
             <div class="source-actions">
-              <button id="sample-button" class="text-button" type="button">예문 불러오기</button>
+              <button id="sample-button" class="text-button" type="button" aria-haspopup="dialog">예문 불러오기</button>
               <button id="toggle-source" class="source-toggle" type="button" aria-expanded="false" aria-controls="second-source-group">두 글 섞기</button>
             </div>
           </div>
@@ -57,6 +58,7 @@
                   <button id="clear-button" class="text-button" type="button" aria-label="첫 번째 원문 비우기">비우기</button>
                 </div>
               </div>
+              <p class="source-sample-credit field-help" hidden><a target="_blank" rel="noopener noreferrer"></a></p>
             </div>
             <div id="second-source-group" class="source-field" hidden>
               <label class="source-label" for="second-source">두 번째 원문</label>
@@ -67,6 +69,7 @@
                   <button id="clear-second-button" class="text-button" type="button" aria-label="두 번째 원문 비우기" disabled>비우기</button>
                 </div>
               </div>
+              <p class="source-sample-credit field-help" hidden><a target="_blank" rel="noopener noreferrer"></a></p>
             </div>
           </div>
 
@@ -155,7 +158,7 @@
                 <span id="strength-value">0%</span>
               </div>
               <input id="strength" type="range" min="0" max="100" value="0" aria-describedby="strength-help">
-              <p id="strength-help" class="field-help">강도를 높이면 문장부호, 조사, 어순을 차례로 다듬어요.</p>
+              <p id="strength-help" class="field-help">강도를 높이면 조사와 어순을 다듬고, 끊긴 표현을 원문에서 일부 되살려요.</p>
               <p id="strength-status" class="field-help strength-status" role="status" hidden></p>
             </div>
             <div class="origin-settings">
@@ -195,6 +198,36 @@
       </section>
     </main>
   </div>
+
+  <dialog id="sample-dialog" class="compare-dialog sample-dialog" aria-labelledby="sample-title">
+    <div class="panel-header">
+      <h2 id="sample-title">예나 낭만주의 예문</h2>
+      <form method="dialog">
+        <button class="copy-button" type="submit">닫기</button>
+      </form>
+    </div>
+    <form id="sample-form">
+      <div class="sample-options">
+        <div class="sample-choice">
+          <label for="sample-first">첫 번째 원문</label>
+          <div class="select-box"><select id="sample-first"></select></div>
+          <p class="sample-excerpt" tabindex="0" aria-label="첫 번째 발췌 미리보기"></p>
+          <p class="field-help sample-credit"></p>
+          <a class="sample-source" target="_blank" rel="noopener noreferrer">독일어 원문</a>
+        </div>
+        <div class="sample-choice" id="sample-second-choice" hidden>
+          <label for="sample-second">두 번째 원문</label>
+          <div class="select-box"><select id="sample-second"></select></div>
+          <p class="sample-excerpt" tabindex="0" aria-label="두 번째 발췌 미리보기"></p>
+          <p class="field-help sample-credit"></p>
+          <a class="sample-source" target="_blank" rel="noopener noreferrer">독일어 원문</a>
+        </div>
+      </div>
+      <div class="sample-actions row-actions">
+        <button class="mix-button" type="submit">원문에 넣고 섞기</button>
+      </div>
+    </form>
+  </dialog>
 
   <dialog id="compare-dialog" class="compare-dialog" aria-labelledby="compare-title">
     <div class="panel-header">
