@@ -153,7 +153,7 @@
     return { positions, owners };
   }
 
-  function reconnect(pieces, piece, connection, index) {
+  function reconnect(pieces, piece, connection, index, avoid) {
     const { words, side, accept } = connection;
     const originIndex = index.positions.get(piece);
     const nearbyPieces = side === 1 ? pieces.slice(originIndex + 1, originIndex + 1 + words.length)
@@ -180,7 +180,7 @@
         end: completesSentence ? [piece, donor] : null,
       };
     }
-    if (index.owners.has(text)) return null;
+    if (index.owners.has(text) || takenElsewhere(words, avoid)) return null;
     // Require a concrete source continuation and avoid adding a fragment next to a lock.
     if (pieces[originIndex + side]?.locked || piece.joinLeft) return null;
     piece.text = side === 1 ? `${piece.text} ${text}` : `${text} ${piece.text}`;
@@ -241,7 +241,7 @@
     return false;
   }
 
-  function restoreConnections(pieces, strength, edits) {
+  function restoreConnections(pieces, strength, edits, avoid) {
     let remaining = strength >= 85 ? 3 : strength >= 75 ? 2 : 1;
     const candidates = pieces.filter((piece) => !piece.locked && piece.origin)
       .flatMap((piece) => sourceConnections(piece, strength).map((connection) => ({ piece, connection })))
@@ -250,7 +250,7 @@
     let index = null;
     for (const { piece, connection } of candidates) {
       index ??= indexConnections(pieces);
-      const repair = reconnect(pieces, piece, connection, index);
+      const repair = reconnect(pieces, piece, connection, index, avoid);
       if (!repair) continue;
       index = null;
       edits.push(repair.note);
@@ -263,7 +263,14 @@
     if (strength >= 85 && reorderSourcePair(pieces)) edits.push('원문에서 맞닿았던 구절을 이어 놓았어요.');
   }
 
-  function clippedSourceClause(pieces) {
+  // Words restored from the source must not repeat what other result lines already say.
+  function takenElsewhere(words, avoid) {
+    if (!avoid || !words.length) return false;
+    if (words.length === 1) return avoid.words.has(words[0]);
+    return words.slice(1).some((word, index) => avoid.text.includes(words[index] + ' ' + word));
+  }
+
+  function clippedSourceClause(pieces, avoid) {
     if (pieces.length < 2) return null;
     let originals;
     for (let index = pieces.length - 1; index >= 0; index -= 1) {
@@ -278,6 +285,7 @@
       if (!/^(?:아무도|[가-힣]+(?:은|는|이|가|을|를|인|른|한|진|린|던|하며|내며|마치|처럼|마다|에|에서|까지))$/u.test(head.at(-1))) continue;
       originals ??= new Set(pieces.flatMap((part) => wordsIn(part.text)));
       if (originals.has(following[0])) continue;
+      if (takenElsewhere(following.slice(0, last + 1), avoid)) continue;
       return { piece, continuation: following.slice(0, last + 1).join(' ') };
     }
     return null;
@@ -412,17 +420,90 @@
     pieces.splice(first.index, last.index - first.index + 1, ...tail, ...sentence);
   }
 
+  // A word that ends a sentence: terminal punctuation, or a completed predicate.
+  function endsSentence(word) {
+    return !!word && (sentenceMark.test(word) || completedPredicate.test(word + '.'));
+  }
+
+  // Dependent nouns and auxiliaries cannot open a line on their own.
+  const dependentStart = /^(?:것[이을은도]?|수[가도는]?|듯[이한]?|때[에가는]?|채로?|만큼|대로|뿐[이]?|척|줄[을]?|동안[에]?)[,.!?…]*$/u;
+
+  function lastWord(piece) {
+    return wordsIn(piece.text).at(-1);
+  }
+
+  // Move the piece that closes a sentence to the end of the line.
+  function terminalToEnd(pieces) {
+    const last = pieces.at(-1);
+    if (!last || last.locked || endsSentence(lastWord(last))) return false;
+    for (let index = pieces.length - 2; index >= 0; index -= 1) {
+      const piece = pieces[index];
+      if (!endsSentence(lastWord(piece))) continue;
+      const span = pieces.slice(index);
+      if (span.some((part) => part.locked) || span.slice(1).some((part) => part.joinLeft)) return false;
+      pieces.push(...pieces.splice(index, 1));
+      return true;
+    }
+    return false;
+  }
+
+  // Finish an open line with the words that followed its last piece in the source.
+  function finishFromSource(pieces, limit, avoid) {
+    const last = pieces.at(-1);
+    if (!last || last.locked || endsSentence(lastWord(last))) return null;
+    const after = last.origin?.after ?? [];
+    const end = after.findIndex(endsSentence);
+    if (end === -1 || end >= limit) return null;
+    const words = after.slice(0, end + 1);
+    const present = new Set(pieces.flatMap((piece) => wordsIn(piece.text)));
+    if (words.some((word) => present.has(word)) || takenElsewhere(words, avoid)) return null;
+    last.text += ' ' + words.join(' ');
+    return words.join(' ');
+  }
+
+  // Give a line that opens on a dependent word the word it leaned on in the source.
+  function anchorStart(pieces, avoid) {
+    const first = pieces[0];
+    if (!first || first.locked || !dependentStart.test(wordsIn(first.text)[0] ?? '')) return null;
+    const word = first.origin?.before?.at(-1);
+    if (!word || endsSentence(word) || takenElsewhere([word], avoid)) return null;
+    first.text = word + ' ' + first.text;
+    return word;
+  }
+
+  // Mid-line full stops become commas so the line reads as one breath,
+  // and a comma left hanging at the end of the line is dropped.
+  function softenStops(pieces) {
+    let changed = false;
+    const tokens = tokenize(pieces);
+    const end = tokens.at(-1);
+    if (end && !pieces[end.index].locked && /[가-힣][,，、]$/u.test(end.word)) {
+      const piece = pieces[end.index];
+      piece.text = piece.text.slice(0, end.end - 1) + piece.text.slice(end.end);
+      changed = true;
+    }
+    for (const token of tokens.slice(0, -1).reverse()) {
+      const piece = pieces[token.index];
+      if (piece.locked || !/^[가-힣]+[다요][.。]$/u.test(token.word)) continue;
+      piece.text = piece.text.slice(0, token.end - 1) + ',' + piece.text.slice(token.end);
+      changed = true;
+    }
+    return changed;
+  }
+
   function joinPieces(pieces) {
     return pieces.map((piece, index) => (index && !piece.joinLeft ? ' ' : '') + piece.text).join('');
   }
 
-  function smooth(pieces, strength, { applySuggestions = false } = {}) {
+  // `context` is the raw text of the other result lines, so restorations avoid repeats.
+  function smooth(pieces, strength, { applySuggestions = false, context = '' } = {}) {
     if (!(strength >= 15)) return { pieces, edits: [], suggestions: [] };
     const result = pieces.map((piece) => ({ ...piece }));
+    const avoid = context ? { text: ' ' + context + ' ', words: new Set(wordsIn(context)) } : null;
     const edits = [];
     const suggestions = [];
     const spacesTidied = tidyPieces(result, strength, edits);
-    if (strength >= 60) restoreConnections(result, strength, edits);
+    if (strength >= 60) restoreConnections(result, strength, edits, avoid);
 
     if (strength >= 45) {
       const words = findWords(result);
@@ -451,8 +532,16 @@
       }
     }
 
+    if (strength >= 60 && terminalToEnd(result)) edits.push('문장을 맺는 조각을 줄 끝으로 옮겼어요.');
+    if (strength >= 80) {
+      const finished = finishFromSource(result, strength >= 100 ? 6 : 4, avoid);
+      if (finished) edits.push(`원문의 ‘${finished}’ 구절로 줄을 맺었어요.`);
+      const anchor = anchorStart(result, avoid);
+      if (anchor) edits.push(`원문에서 앞말 ‘${anchor}’ 구절을 되살렸어요.`);
+    }
+
     if (strength >= 85) {
-      const clause = clippedSourceClause(result);
+      const clause = clippedSourceClause(result, avoid);
       if (clause) {
         if (applySuggestions) {
           clause.piece.text += ' ' + clause.continuation;
@@ -463,6 +552,7 @@
       }
     }
 
+    if (strength >= 30 && softenStops(result)) edits.push('줄 안의 마침표·쉼표를 한 호흡으로 정리했어요.');
     if (joinPunctuation(result) || spacesTidied) edits.unshift('문장부호 주변의 간격을 정리했어요.');
     return { pieces: result, edits, suggestions };
   }

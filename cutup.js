@@ -111,7 +111,7 @@
 
   function surroundingWords(words, start, end, manual) {
     let contextStart = Math.max(0, start - 3);
-    let contextEnd = Math.min(words.length, end + 3);
+    let contextEnd = Math.min(words.length, end + 6);
     if (manual) {
       // Manual fragments can span sentences on the same physical line.
       for (let index = contextStart; index < start; index += 1) {
@@ -126,20 +126,26 @@
     return { before: words.slice(contextStart, start), after: words.slice(end, contextEnd) };
   }
 
+  // Every piece remembers where it came from: its neighbours in the source (origin),
+  // the index of its first word in the whole source (pos), and its sentence (group).
   function sourcePieces(text, source, mode) {
     const occurrences = new Map();
-    return fragmentGroups(text, mode).flatMap((fragments) => {
+    let offset = 0;
+    return fragmentGroups(text ?? '', mode).flatMap((fragments, group) => {
       const wordGroups = fragments.map(splitWords);
       const words = wordGroups.flat();
       let start = 0;
-      return fragments.map((fragment, index) => {
+      const pieces = fragments.map((fragment, index) => {
         const occurrence = occurrences.get(fragment) ?? 0;
         occurrences.set(fragment, occurrence + 1);
         const end = start + wordGroups[index].length;
         const origin = surroundingWords(words, start, end, mode === 'manual');
+        const piece = { id: source + ':' + occurrence + ':' + fragment, text: fragment, source, origin, pos: offset + start, group };
         start = end;
-        return { id: source + ':' + occurrence + ':' + fragment, text: fragment, source, origin };
+        return piece;
       });
+      offset += words.length;
+      return pieces;
     });
   }
 
@@ -154,20 +160,20 @@
         const uniqueText = new Map();
         for (const piece of sourcePieces(sources[source], source, splitMode)) {
           byId.set(piece.id, piece);
-          uniqueText.set(piece.text, uniqueText.has(piece.text) ? null : piece.origin);
+          uniqueText.set(piece.text, uniqueText.has(piece.text) ? null : piece);
         }
         cache.set(splitMode, { byId, uniqueText });
       }
       return cache.get(splitMode);
     }
 
-    function findOrigin(piece) {
+    function findPiece(piece) {
       if (!caches[piece.source]) return null;
       let unique = null;
       for (const splitMode of modes) {
         const { byId, uniqueText } = indexSource(piece.source, splitMode);
         const exact = byId.get(piece.id);
-        if (exact?.text === piece.text) return exact.origin;
+        if (exact?.text === piece.text) return exact;
         unique ??= uniqueText.get(piece.text);
       }
       return unique;
@@ -177,11 +183,11 @@
     const restored = rows.map((row) => {
       let pieces;
       for (const [index, piece] of row.pieces.entries()) {
-        if (piece.origin) continue;
-        const origin = findOrigin(piece);
-        if (!origin) continue;
+        if (piece.origin && Number.isInteger(piece.pos)) continue;
+        const found = findPiece(piece);
+        if (!found) continue;
         pieces ??= [...row.pieces];
-        pieces[index] = { ...piece, origin };
+        pieces[index] = { ...piece, origin: piece.origin ?? found.origin, pos: found.pos, group: found.group };
       }
       if (!pieces) return row;
       changed = true;
@@ -223,44 +229,52 @@
     });
   }
 
-  function getSampleCounts(capacities, required, ratio) {
-    if (ratio === null || !Number.isFinite(ratio)) return capacities;
-    if (ratio <= 0) return [0, capacities[1]];
-    if (ratio >= 100) return [capacities[0], 0];
-
-    if (!capacities[0] || !capacities[1]) return capacities;
-    const source = capacities[0] <= capacities[1] ? 0 : 1;
-    const firstCount = Math.max(1, required[source]);
-    const firstOtherCount = Math.max(1, required[1 - source]);
-    const limit = capacities[source];
-    const otherLimit = capacities[1 - source];
-    const share = source === 0 ? ratio : 100 - ratio;
-    let best = [1, 1];
-    let bestError = Infinity;
-    let bestTotal = 0;
-    for (let count = firstCount; count <= limit; count += 1) {
-      const idealOtherCount = count * (100 - share) / share;
-      for (const nearest of [Math.floor(idealOtherCount), Math.ceil(idealOtherCount)]) {
-        const other = Math.max(firstOtherCount, Math.min(otherLimit, nearest));
-        const total = count + other;
-        const error = Math.abs(count * (100 - share) - other * share) / total;
-        if (error < bestError || (error === bestError && total > bestTotal)) {
-          best = [count, other];
-          bestError = error;
-          bestTotal = total;
-        }
-      }
-    }
-    return source === 0 ? best : best.reverse();
+  function wordList(words) {
+    return (words ?? []).map((word) => String(word).trim()).filter(Boolean);
   }
 
-  function sample(pieces, count, ordered, randomness) {
-    if (ordered && count === pieces.length) return pieces;
-    const selected = shuffle(pieces, randomness, (piece) => piece.text).slice(0, count);
-    if (!ordered) return selected;
+  function excludePieces(pieces, exclude) {
+    const banned = wordList(exclude);
+    return banned.length ? pieces.filter((piece) => !banned.some((word) => piece.text.includes(word))) : pieces;
+  }
 
+  // With weights, each column contributes in proportion; without, every piece is available.
+  function getSampleCounts(capacities, required, weights) {
+    if (!Array.isArray(weights)) return capacities;
+    const shares = capacities.map((capacity, source) => (capacity > 0 ? Math.max(0, Number(weights[source]) || 0) : 0));
+    const scales = shares.map((share, source) => (share > 0 ? capacities[source] / share : Infinity));
+    const scale = Math.min(...scales);
+    if (!Number.isFinite(scale)) return capacities;
+    return capacities.map((capacity, source) => Math.min(capacity, Math.max(required[source], Math.round(scale * shares[source]))));
+  }
+
+  // Pick `count` pieces; one piece for every must-include word comes first.
+  function sample(pieces, count, ordered, randomness, include = []) {
+    if (count <= 0) return [];
+    const priority = [];
+    for (const word of wordList(include)) {
+      const matches = pieces.filter((piece) => piece.text.includes(word) && !priority.includes(piece));
+      if (matches.length) priority.push(matches[Math.floor(randomness() * matches.length)]);
+    }
+    if (!priority.length && ordered && count >= pieces.length) return pieces;
+    const rest = shuffle(pieces.filter((piece) => !priority.includes(piece)), randomness, (piece) => piece.text);
+    const selected = [...priority, ...rest].slice(0, count);
+    if (!ordered) return shuffle(selected, randomness, (piece) => piece.text);
     const selectedIds = new Set(selected.map((piece) => piece.id));
     return pieces.filter((piece) => selectedIds.has(piece.id));
+  }
+
+  function trimToBudget(pieces, budget, randomness, keep) {
+    if (!pieces.length) return pieces;
+    const kept = new Set();
+    let total = 0;
+    const order = [...pieces.filter((piece) => keep.has(piece.id)), ...shuffle(pieces.filter((piece) => !keep.has(piece.id)), randomness)];
+    for (const piece of order) {
+      if (kept.size && !keep.has(piece.id) && total + countSyllables(piece.text) / 2 > budget) continue;
+      kept.add(piece);
+      total += countSyllables(piece.text);
+    }
+    return pieces.filter((piece) => kept.has(piece));
   }
 
   function syllablesIn(pieces) {
@@ -292,31 +306,39 @@
     });
   }
 
-  function arrange([first, second], count, strategy, rhythm, randomness) {
-    if (count === 0) return [];
-    if (!first.length || !second.length) {
-      return partition(first.length ? first : second, count, rhythm);
+  function interleaveMany(lists) {
+    const line = [];
+    const length = Math.max(0, ...lists.map((list) => list.length));
+    for (let index = 0; index < length; index += 1) {
+      for (const list of lists) if (index < list.length) line.push(list[index]);
     }
-    if (strategy === 'alternate' || count > Math.max(first.length, second.length)) {
-      const pieces = randomness() < 0.5 ? interleave(first, second) : interleave(second, first);
-      return partition(pieces, count, rhythm);
+    return line;
+  }
+
+  function arrange(lists, count, strategy, rhythm, randomness) {
+    if (count === 0) return [];
+    const filled = lists.filter((list) => list.length);
+    if (filled.length <= 1) return partition(filled[0] ?? [], count, rhythm);
+    const sourceOrder = () => (strategy === 'ordered' ? filled : shuffle(filled, randomness));
+    if (strategy === 'alternate' || count > Math.max(...filled.map((list) => list.length))) {
+      return partition(interleaveMany(sourceOrder()), count, rhythm);
     }
 
-    const left = partition(first, count, rhythm);
-    const right = partition(second, count, rhythm);
-    const order = Array.from({ length: count }, (_, index) => strategy === 'ordered' ? index : count - 1 - index);
+    const groups = filled.map((list) => partition(list, count, rhythm));
     if (rhythm && strategy === 'default') {
-      // Pair longer groups with shorter ones while keeping a crossover on the first line.
-      left.sort((a, b) => syllablesIn(b) - syllablesIn(a));
-      right.sort((a, b) => syllablesIn(a) - syllablesIn(b));
-      const crossover = order.findIndex((position) => left[position].length && right[position].length);
-      if (crossover > 0) [order[0], order[crossover]] = [order[crossover], order[0]];
+      // Pair longer groups from one column with shorter groups from the next.
+      groups.forEach((list, source) => list.sort((a, b) => (source % 2 ? syllablesIn(a) - syllablesIn(b) : syllablesIn(b) - syllablesIn(a))));
     }
-    return order.map((position) => {
-      return randomness() < 0.5
-        ? interleave(left[position], right[position])
-        : interleave(right[position], left[position]);
+    return Array.from({ length: count }, (_, line) => {
+      const position = strategy === 'ordered' ? line : count - 1 - line;
+      const parts = groups.map((list) => list[position]);
+      return interleaveMany(strategy === 'ordered' ? parts : shuffle(parts, randomness, (part) => part.map((piece) => piece.id).join()));
     });
+  }
+
+  // Bowie's own layout: every line takes one fragment from each column, left to right.
+  function arrangeColumns(lists, count) {
+    return Array.from({ length: count }, (_, line) => lists.map((list) => list[line]).filter(Boolean));
   }
 
   function placePins(pins, count) {
@@ -333,29 +355,59 @@
     mode = 'phrase',
     lineCount = 6,
     strategy = 'default',
+    weights = null,
     ratio = null,
     targetSyllables = null,
+    include = [],
+    exclude = [],
     previous = [],
     randomness = Math.random,
   } = {}) {
+    const columns = sources.length;
+    // Older callers pass a two-column ratio (0–100) instead of weights.
+    const shares = weights ?? (ratio === null || !Number.isFinite(Number(ratio)) || columns < 2 ? null : [Number(ratio), 100 - Number(ratio)]);
     const pins = collectPins(previous);
     const pinned = pins.flatMap((pin) => pin.pieces.map(({ piece }) => piece));
-    const bySource = [0, 1].map((source) => pinned.filter((piece) => piece.source === source));
+    const bySource = sources.map((_, source) => pinned.filter((piece) => piece.source === source));
     const required = bySource.map((pieces) => pieces.length);
     const pools = bySource.map((pieces, source) => removePinned(
-      sourcePieces(sources[source] ?? '', source, mode), pieces,
+      excludePieces(sourcePieces(sources[source] ?? '', source, mode), exclude), pieces,
     ));
     const capacities = pools.map((pieces, source) => pieces.length + required[source]);
-    const sampleCounts = getSampleCounts(capacities, required, sources.length > 1 ? ratio : null);
-    const selected = pools.map((pieces, source) => sample(
-      pieces, Math.max(0, sampleCounts[source] - required[source]), strategy === 'ordered', randomness,
-    ));
-    const totals = selected.map((pieces, source) => pieces.length + required[source]);
-    const remaining = selected[0].length + selected[1].length;
+    const ordered = strategy === 'ordered';
+    const freeRows = Math.max(0, normalizeLineCount(lineCount) - pins.filter((pin) => pin.row.locked).length);
+
+    let selected;
+    if (strategy === 'columns') {
+      selected = pools.map((pieces) => sample(pieces, Math.min(pieces.length, freeRows), false, randomness, include));
+    } else {
+      const sampleCounts = getSampleCounts(capacities, required, columns > 1 ? shares : null);
+      selected = pools.map((pieces, source) => sample(
+        pieces, Math.max(0, sampleCounts[source] - required[source]), ordered, randomness, include,
+      ));
+    }
+
     const preferredSyllables = Number(targetSyllables);
-    const rhythm = Number.isFinite(preferredSyllables) && preferredSyllables > 0;
-    const lengths = rhythm ? syllablesIn(selected[0]) + syllablesIn(selected[1]) + syllablesIn(pinned) : 0;
-    const preferred = lengths ? Math.max(1, Math.round(lengths / preferredSyllables)) : Math.max(...totals);
+    const rhythm = strategy !== 'columns' && Number.isFinite(preferredSyllables) && preferredSyllables > 0;
+    if (rhythm) {
+      // Use only as many fragments as the requested lines can hold.
+      const budget = preferredSyllables * normalizeLineCount(lineCount) - syllablesIn(pinned);
+      const available = selected.reduce((sum, pieces) => sum + syllablesIn(pieces), 0);
+      if (available > budget) {
+        const keep = new Set(sample(selected.flat(), wordList(include).length, false, randomness, include).map((piece) => piece.id));
+        selected = selected.map((pieces) => {
+          const share = available ? syllablesIn(pieces) / available : 0;
+          return trimToBudget(pieces, Math.max(0, budget) * share, randomness, keep);
+        });
+      }
+    }
+
+    const totals = selected.map((pieces, source) => pieces.length + required[source]);
+    const remaining = selected.reduce((sum, pieces) => sum + pieces.length, 0);
+    const lengths = rhythm ? selected.reduce((sum, pieces) => sum + syllablesIn(pieces), 0) + syllablesIn(pinned) : 0;
+    const preferred = strategy === 'columns'
+      ? Math.max(0, ...selected.map((pieces) => pieces.length)) + pins.length
+      : lengths ? Math.max(1, Math.round(lengths / preferredSyllables)) : Math.max(0, ...totals);
     const needsFreeLine = remaining > 0 && pins.every((pin) => pin.row.locked);
     const minimum = Math.max((pins.at(-1)?.index ?? -1) + 1, pins.length + Number(needsFreeLine));
     const count = Math.min(
@@ -371,7 +423,9 @@
       else if (!pin.row.locked) partial.push(index);
     });
     const targets = [...vacancies, ...partial].slice(0, remaining).sort((a, b) => a - b);
-    const drafts = arrange(selected, targets.length, strategy, rhythm, randomness);
+    const drafts = strategy === 'columns'
+      ? arrangeColumns(selected, targets.length)
+      : arrange(selected, targets.length, strategy, rhythm, randomness);
     const draftBySlot = new Map(targets.map((slot, index) => [slot, drafts[index]]));
 
     return slots.map((pin, index) => {
@@ -387,5 +441,109 @@
     });
   }
 
-  globalThis.Verbasizer = Object.freeze({ split, mix, mixSources, compose, countSyllables, restoreOrigins });
+  // Pieces not used by any line, optionally only from one column.
+  function unusedPieces(sources, rows, { mode = 'phrase', exclude = [], source = null, keepRow = -1 } = {}) {
+    const used = rows.flatMap((row, index) => (index === keepRow ? row.pieces.filter((piece) => piece.locked) : row.pieces));
+    const all = sources.flatMap((text, column) => (source === null || source === column
+      ? excludePieces(sourcePieces(text ?? '', column, mode), exclude)
+      : []));
+    return removePinned(all, used);
+  }
+
+  // A new draw for one line; the other lines and this line's locked pieces stay.
+  function rerollLine(sources, rows, index, {
+    mode = 'phrase', strategy = 'default', targetSyllables = null, include = [], exclude = [], randomness = Math.random,
+  } = {}) {
+    const row = rows[index];
+    if (!row || row.locked) return row;
+    const keep = row.pieces.filter((piece) => piece.locked);
+    let pool = unusedPieces(sources, rows, { mode, exclude, keepRow: index });
+    if (!pool.length) pool = removePinned(sources.flatMap((text, column) => sourcePieces(text ?? '', column, mode)), keep);
+    if (!pool.length) return row;
+    let fresh;
+    if (strategy === 'columns') {
+      fresh = sources.map((_, column) => pool.filter((piece) => piece.source === column))
+        .map((pieces) => pieces[Math.floor(randomness() * pieces.length)]).filter(Boolean);
+    } else {
+      const shuffled = sample(pool, pool.length, false, randomness, include);
+      const target = Number(targetSyllables);
+      const wanted = Math.max(1, row.pieces.length - keep.length);
+      fresh = [];
+      let total = syllablesIn(keep);
+      for (const piece of shuffled) {
+        if (Number.isFinite(target) && target > 0) {
+          if (fresh.length && total + countSyllables(piece.text) / 2 > target) continue;
+        } else if (fresh.length >= wanted) break;
+        fresh.push(piece);
+        total += countSyllables(piece.text);
+      }
+    }
+    const pieces = [...fresh];
+    let nextSlot = 0;
+    for (const piece of keep.sort((a, b) => (a.pinnedSlot ?? 0) - (b.pinnedSlot ?? 0))) {
+      const position = Math.min(Math.max(piece.pinnedSlot ?? 0, nextSlot), pieces.length);
+      pieces.splice(position, 0, piece);
+      nextSlot = position + 1;
+    }
+    return { pieces, locked: false };
+  }
+
+  // Swap one piece for an unused one of similar length, preferably from the same column.
+  function swapPiece(sources, rows, index, pieceId, { mode = 'phrase', exclude = [], randomness = Math.random } = {}) {
+    const row = rows[index];
+    const position = row?.pieces.findIndex((piece) => piece.id === pieceId) ?? -1;
+    if (position === -1) return null;
+    const current = row.pieces[position];
+    let pool = unusedPieces(sources, rows, { mode, exclude, source: current.source });
+    if (!pool.length) pool = unusedPieces(sources, rows, { mode, exclude });
+    if (!pool.length) return null;
+    const length = countSyllables(current.text);
+    const near = shuffle(pool, randomness)
+      .sort((a, b) => Math.abs(countSyllables(a.text) - length) - Math.abs(countSyllables(b.text) - length))
+      .slice(0, 4);
+    const replacement = near[Math.floor(randomness() * near.length)];
+    const pieces = [...row.pieces];
+    pieces[position] = replacement;
+    return { ...row, pieces };
+  }
+
+  // Junctions between neighbouring pieces: 'far' when they came from different columns
+  // or from far apart in one text, 'seam' when they were already neighbours in the source.
+  function junctions(pieces) {
+    return pieces.slice(1).map((piece, index) => {
+      const before = pieces[index];
+      if (before.source !== piece.source) return 'far';
+      if (!Number.isInteger(before.pos) || !Number.isInteger(piece.pos)) return 'near';
+      const length = splitWords(before.text).length;
+      if (piece.pos === before.pos + length) return 'seam';
+      return Math.abs(piece.pos - before.pos) > 12 || before.group !== piece.group ? 'far' : 'near';
+    });
+  }
+
+  // The sentence of the source a piece was cut from.
+  function sentenceOf(text, piece) {
+    if (typeof text !== 'string' || !piece?.text) return null;
+    const occurrence = Number(String(piece.id).split(':')[1]) || 0;
+    let at = -1;
+    for (let count = 0; count <= occurrence; count += 1) {
+      const next = text.indexOf(piece.text, at + 1);
+      if (next === -1) break;
+      at = next;
+    }
+    if (at === -1) return null;
+    const head = text.slice(0, at);
+    const start = Math.max(head.search(/[^.!?…。！？\n]*$/u), 0);
+    const tailMatch = /[.!?…。！？]["'”’」』)\]]*|\n/u.exec(text.slice(at + piece.text.length));
+    const end = tailMatch ? at + piece.text.length + tailMatch.index + tailMatch[0].length : text.length;
+    return {
+      before: text.slice(start, at).trimStart(),
+      match: piece.text,
+      after: text.slice(at + piece.text.length, end).trimEnd(),
+    };
+  }
+
+  globalThis.Verbasizer = Object.freeze({
+    split, mix, mixSources, compose, countSyllables, restoreOrigins,
+    rerollLine, swapPiece, junctions, sentenceOf, unusedPieces,
+  });
 })();

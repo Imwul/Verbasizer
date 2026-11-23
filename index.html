@@ -2,91 +2,103 @@
 <html lang="ko">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#f5f5ed">
-  <meta name="description" content="한 글 또는 두 글을 잘라 섞고, 마음에 든 구절을 골라 다듬는 한국어 컷업 작업실">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#ffffff">
+  <meta name="description" content="글을 잘라 섞고, 우연히 맞닿은 줄에서 가사를 고르는 한국어 컷업 작업실">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Verbasizer">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <title>Verbasizer 한국어판</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="stylesheet" href="styles.css">
   <script src="cutup.js" defer></script>
   <script src="smoothing.js" defer></script>
   <script src="samples.js" defer></script>
+  <script src="sound.js" defer></script>
+  <script src="cards.js" defer></script>
+  <script src="store.js" defer></script>
   <script src="app.js" defer></script>
 </head>
 <body>
-  <div class="page">
-    <header class="masthead">
-      <div class="brand">
-        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
-        <span>Verbasizer</span>
-        <small>한국어판</small>
+  <header class="menubar">
+    <span class="menubar-brand"><span class="apple" aria-hidden="true">◆</span> Verbasizer <small>한국어판</small></span>
+    <nav class="menubar-items" aria-label="도구">
+      <button id="card-button" class="menu-item" type="button" aria-haspopup="dialog">작업 카드</button>
+      <button id="theme-button" class="menu-item" type="button" aria-pressed="false">반전</button>
+      <button id="help-button" class="menu-item" type="button" aria-haspopup="dialog">도움말</button>
+      <a class="menu-item" href="https://www.youtube.com/watch?v=x3IKLMgFaDA" target="_blank" rel="noopener noreferrer">보위의 시연 ↗<span class="visually-hidden"> (새 창)</span></a>
+    </nav>
+  </header>
+
+  <main class="desktop">
+    <section class="window notes-window" aria-labelledby="notes-title">
+      <div class="title-bar"><h1 id="notes-title" class="title">작업 노트</h1></div>
+      <div class="toolbar">
+        <label class="visually-hidden" for="note-select">노트 고르기</label>
+        <select id="note-select" class="field note-select"></select>
+        <button id="new-note" class="btn" type="button">새 노트</button>
+        <button id="duplicate-note" class="btn" type="button">복제</button>
+        <button id="delete-note" class="btn" type="button" aria-haspopup="dialog">지우기…</button>
+        <span class="toolbar-gap" aria-hidden="true"></span>
+        <button id="export-text" class="btn" type="button">텍스트로 내보내기</button>
+        <button id="backup-save" class="btn" type="button">백업 저장</button>
+        <button id="backup-load" class="btn" type="button">백업 불러오기…</button>
+        <input id="backup-file" type="file" accept="application/json,.json" hidden>
       </div>
-      <a class="source-link" href="https://www.youtube.com/watch?v=x3IKLMgFaDA" target="_blank" rel="noopener noreferrer">보위의 시연<span class="visually-hidden"> (새 창)</span></a>
-    </header>
+      <div class="window-pane notes-pane">
+        <label for="note-title" class="note-title-label">제목</label>
+        <input id="note-title" class="field note-title" type="text" autocomplete="off" spellcheck="false" maxlength="80">
+        <p class="about">1995년 데이비드 보위와 타이 로버츠가 가사를 쓰려고 만든 컷업 프로그램 Verbasizer를 한국어로 옮겼습니다. 노트는 이 브라우저에 저장되니, 가끔 백업을 저장해 두세요.</p>
+      </div>
+    </section>
 
-    <main>
-      <section class="intro" aria-labelledby="intro-title">
-        <div class="intro-copy">
-          <h1 id="intro-title">문장을 잘라<br>다시 잇다</h1>
-          <p>데이비드 보위의 컷업 기법을 한국어로.<br>우연히 만난 문장에서 다음 한 줄을 찾아보세요.</p>
-        </div>
-        <div class="paper-art" aria-hidden="true">
-          <div class="paper-guide"></div>
-          <span class="strip strip-first">그윽한 향기가</span>
-          <span class="strip strip-second">가득했다</span>
-          <span class="strip strip-third">온갖 빛깔의 꽃이</span>
-          <span class="strip strip-fourth">공기에</span>
-        </div>
-      </section>
+    <form id="studio-form" class="window input-panel" aria-labelledby="source-title" novalidate>
+      <div class="title-bar"><h2 id="source-title" class="title">원문</h2></div>
+      <div class="toolbar">
+        <button id="sample-button" class="btn" type="button" aria-haspopup="dialog">예문 불러오기…</button>
+        <button id="add-column" class="btn" type="button">칸 추가</button>
+        <span id="column-count" class="toolbar-note"></span>
+      </div>
+      <div class="window-pane">
+        <div id="columns" class="source-fields"></div>
+        <p id="sources-help" class="field-help sources-help" hidden>켜 둔 칸에 글을 넣어야 섞을 수 있어요.</p>
+      </div>
 
-      <div class="studio">
-        <form id="studio-form" class="panel input-panel" aria-labelledby="source-title">
-          <div class="panel-header">
-            <h2 id="source-title">원문</h2>
-            <div class="source-actions">
-              <button id="sample-button" class="text-button" type="button" aria-haspopup="dialog">예문 불러오기</button>
-              <button id="toggle-source" class="source-toggle" type="button" aria-expanded="false" aria-controls="second-source-group">두 글 섞기</button>
-            </div>
-          </div>
+      <div class="separator" role="presentation"></div>
 
-          <div class="source-fields">
-            <div class="source-field">
-              <label id="source-label" class="source-label visually-hidden" for="source">원문</label>
-              <div class="source-box">
-                <textarea id="source" rows="6" spellcheck="false" placeholder="섞고 싶은 글을 붙여 넣으세요."></textarea>
-                <div class="source-tools">
-                  <span id="source-count">0자</span>
-                  <button id="clear-button" class="text-button" type="button" aria-label="첫 번째 원문 비우기">비우기</button>
+      <div class="window-pane settings">
+        <table class="settings-table">
+          <tbody>
+            <tr>
+              <th scope="row" id="mode-label">자를 단위</th>
+              <td>
+                <div class="radios" role="radiogroup" aria-labelledby="mode-label" aria-describedby="unit-help">
+                  <label><input type="radio" name="mode" value="word"> 어절</label>
+                  <label><input type="radio" name="mode" value="phrase" checked> 구절</label>
+                  <label><input type="radio" name="mode" value="line"> 줄</label>
+                  <label><input type="radio" name="mode" value="manual"> 직접(|)</label>
                 </div>
-              </div>
-              <p class="source-sample-credit field-help" hidden><a target="_blank" rel="noopener noreferrer"></a></p>
-            </div>
-            <div id="second-source-group" class="source-field" hidden>
-              <label class="source-label" for="second-source">두 번째 원문</label>
-              <div class="source-box">
-                <textarea id="second-source" rows="6" spellcheck="false" placeholder="첫 번째 글과 섞을 원문을 붙여 넣으세요."></textarea>
-                <div class="source-tools">
-                  <span id="second-source-count">0자</span>
-                  <button id="clear-second-button" class="text-button" type="button" aria-label="두 번째 원문 비우기" disabled>비우기</button>
-                </div>
-              </div>
-              <p class="source-sample-credit field-help" hidden><a target="_blank" rel="noopener noreferrer"></a></p>
-            </div>
-          </div>
-
-          <div class="settings">
-            <fieldset class="cut-settings" aria-describedby="unit-help">
-              <legend>자를 단위</legend>
-              <div class="segments">
-                <label><input type="radio" name="mode" value="word"><span>어절</span></label>
-                <label><input type="radio" name="mode" value="phrase" checked><span>구절</span></label>
-                <label><input type="radio" name="mode" value="line"><span>줄</span></label>
-                <label><input type="radio" name="mode" value="manual"><span>직접</span></label>
-              </div>
-            </fieldset>
-            <div class="line-settings">
-              <label for="line-count">최대 결과 줄 수</label>
-              <div class="select-box">
-                <select id="line-count" name="lineCount">
+                <p id="unit-help" class="field-help">한 문장 안에서 이어지는 짧은 구절을 섞어요.</p>
+              </td>
+            </tr>
+            <tr>
+              <th scope="row"><label for="mix-strategy">배치 방식</label></th>
+              <td>
+                <select id="mix-strategy" class="field">
+                  <option value="default">무작위로 섞기</option>
+                  <option value="alternate">칸을 번갈아</option>
+                  <option value="ordered">원문 순서</option>
+                  <option value="columns">칸마다 한 조각 (보위 방식)</option>
+                </select>
+                <p id="strategy-help" class="field-help"></p>
+              </td>
+            </tr>
+            <tr>
+              <th scope="row"><label for="line-count">결과 줄 수</label></th>
+              <td>
+                <select id="line-count" name="lineCount" class="field">
                   <option value="1">1줄</option>
                   <option value="2">2줄</option>
                   <option value="3">3줄</option>
@@ -100,143 +112,179 @@
                   <option value="11">11줄</option>
                   <option value="12">12줄</option>
                 </select>
-              </div>
-            </div>
-          </div>
-          <p id="unit-help" class="unit-help">한 문장 안에서 이어지는 짧은 구절을 섞어요.</p>
-          <details class="mix-options">
-            <summary>섞기 설정</summary>
-            <div class="mix-option-fields">
-              <div class="option-field">
-                <label for="mix-strategy">배치 방식</label>
-                <div class="select-box">
-                  <select id="mix-strategy">
-                    <option value="default">무작위로 섞기</option>
-                    <option value="alternate">두 글을 번갈아</option>
-                    <option value="ordered">원문 순서</option>
-                  </select>
-                </div>
-              </div>
-              <div class="option-field">
-                <label for="target-syllables">한 줄 목표 음절</label>
-                <input id="target-syllables" type="number" min="1" max="100" step="1" inputmode="numeric" placeholder="지정 안 함">
-              </div>
-              <div id="ratio-settings" class="ratio-settings" hidden>
-                <label class="check-label">
-                  <input id="ratio-enabled" type="checkbox" aria-controls="ratio-controls">
-                  두 글의 비율 지정
-                </label>
-                <div id="ratio-controls" class="range-field" hidden>
-                  <div class="range-label">
-                    <label for="source-ratio">첫 번째 원문 비율</label>
-                    <span id="ratio-value">50 : 50</span>
-                  </div>
-                  <input id="source-ratio" type="range" min="0" max="100" value="50">
-                </div>
-              </div>
-            </div>
-          </details>
-          <p id="sources-help" class="sources-help" hidden>두 원문에 글을 넣으면 함께 섞을 수 있어요.</p>
-          <button id="mix-button" class="mix-button" type="submit">
-            <span class="mix-icon" aria-hidden="true"><i></i><i></i><i></i></span>
-            잘라 섞기
-          </button>
-        </form>
-
-        <section class="panel output-panel" aria-labelledby="output-title">
-          <div class="panel-header">
-            <h2 id="output-title">섞은 글</h2>
-            <div class="output-actions">
-              <button id="compare-button" class="copy-button" type="button" aria-haspopup="dialog" disabled>후보 3개 비교</button>
-              <button id="copy-button" class="copy-button" type="button" disabled>결과 복사</button>
-            </div>
-          </div>
-          <div class="result-settings">
-            <div class="range-field">
-              <div class="range-label">
-                <label for="strength">보정 강도</label>
-                <span id="strength-value">0%</span>
-              </div>
-              <input id="strength" type="range" min="0" max="100" value="0" aria-describedby="strength-help">
-              <p id="strength-help" class="field-help">강도를 높이면 조사와 어순을 다듬고, 끊긴 표현을 원문에서 일부 되살려요.</p>
-              <p id="strength-status" class="field-help strength-status" role="status" hidden></p>
-            </div>
-            <div class="origin-settings">
-              <label class="check-label"><input id="show-origins" type="checkbox"> 출처 색으로 보기</label>
-              <ul id="source-legend" class="source-legend" hidden>
-                <li class="source-1"><span class="origin-swatch" aria-hidden="true"></span>첫 번째 원문</li>
-                <li class="source-2"><span class="origin-swatch" aria-hidden="true"></span>두 번째 원문</li>
-              </ul>
-            </div>
-          </div>
-          <div class="result-sheet">
-            <p id="empty-result" class="empty-result">원문을 넣고 잘라 섞으면 여기에 결과가 나와요.</p>
-            <p id="result-help" class="field-help result-help" hidden>줄을 펼쳐 잠그거나 편집하고, 마음에 드는 줄을 모아 두세요.</p>
-            <div id="result" class="result" hidden></div>
-          </div>
-          <div class="output-footer">
-            <span id="result-count"></span>
-          </div>
-        </section>
-      </div>
-
-      <div class="studio-footer">
-        <p id="notice" class="notice" role="status"></p>
-        <div class="footer-details">
-          <p id="storage-status" class="storage-status"></p>
-          <p class="shortcut"><kbd>Ctrl</kbd> / <kbd>⌘</kbd> + <kbd>Enter</kbd>로 섞기</p>
+              </td>
+            </tr>
+            <tr id="syllable-row">
+              <th scope="row"><label for="target-syllables">한 줄 길이</label></th>
+              <td>
+                <input id="target-syllables" class="field field-number" type="number" min="1" max="100" step="1" inputmode="numeric" value="16" aria-describedby="syllable-help"> 음절
+                <p id="syllable-help" class="field-help">비우면 모든 조각을 씁니다(줄이 길어져요).</p>
+              </td>
+            </tr>
+            <tr>
+              <th scope="row">칸 비중</th>
+              <td>
+                <label class="check-label"><input id="use-weights" type="checkbox"> 칸마다 비중 정하기</label>
+                <p class="field-help">켜면 칸 머리에 1~5 비중이 생겨, 긴 글이 짧은 글을 덮지 않아요.</p>
+              </td>
+            </tr>
+            <tr>
+              <th scope="row"><label for="include-words">꼭 넣을 말</label></th>
+              <td>
+                <input id="include-words" class="field field-words" type="text" autocomplete="off" spellcheck="false" placeholder="예: 꽃, 푸른" aria-describedby="include-help">
+                <p id="include-help" class="field-help">쉼표로 나눠요. 원문에 있는 말이면 그 말이 든 조각을 먼저 뽑아요.</p>
+              </td>
+            </tr>
+            <tr>
+              <th scope="row"><label for="exclude-words">뺄 말</label></th>
+              <td>
+                <input id="exclude-words" class="field field-words" type="text" autocomplete="off" spellcheck="false" placeholder="예: 그를" aria-describedby="exclude-help">
+                <p id="exclude-help" class="field-help">이 말이 든 조각은 쓰지 않아요.</p>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="form-actions">
+          <span class="shortcut"><kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>Enter</kbd></span>
+          <span class="default-ring"><button id="mix-button" class="btn" type="submit">잘라 섞기</button></span>
         </div>
       </div>
+    </form>
 
-      <section id="collection" class="panel collection-panel" aria-labelledby="collection-title">
-        <div class="panel-header">
-          <h2 id="collection-title">모은 줄</h2>
-          <button id="copy-collection" class="copy-button" type="button" disabled>모은 글 복사</button>
+    <section class="window output-panel" aria-labelledby="output-title">
+      <div class="title-bar"><h2 id="output-title" class="title">섞은 글</h2></div>
+      <div class="toolbar">
+        <button id="undo-button" class="btn" type="button" disabled>실행 취소</button>
+        <button id="redo-button" class="btn" type="button" disabled>다시 실행</button>
+        <span class="toolbar-gap" aria-hidden="true"></span>
+        <button id="compare-button" class="btn" type="button" aria-haspopup="dialog" disabled>후보 3개 비교…</button>
+        <button id="copy-button" class="btn" type="button" disabled>결과 복사</button>
+        <button id="speak-all" class="btn" type="button" hidden disabled>모두 읽기</button>
+      </div>
+      <div class="window-pane strength-pane">
+        <div class="strength-head">
+          <label for="strength">보정 강도</label>
+          <output id="strength-value" for="strength" class="readout">0 끔</output>
         </div>
-        <p id="collection-empty" class="field-help">섞은 글을 펼치고 ‘줄 모으기’를 눌러 여기에 담으세요.</p>
+        <input id="strength" type="range" min="0" max="4" step="1" value="0" aria-describedby="strength-help">
+        <ol class="strength-scale" aria-hidden="true">
+          <li>끔</li><li>부호</li><li>어순</li><li>맺음</li><li>복원</li>
+        </ol>
+        <p id="strength-help" class="field-help strength-help">섞은 그대로 둡니다.</p>
+        <p id="strength-status" class="strength-status" role="status" hidden></p>
+        <fieldset class="view-toggles">
+          <legend>표시</legend>
+          <label class="check-label"><input id="show-origins" type="checkbox"> 출처</label>
+          <label class="check-label"><input id="show-strange" type="checkbox"> 낯선 이음</label>
+          <label class="check-label"><input id="show-rhyme" type="checkbox"> 각운</label>
+        </fieldset>
+        <ul id="source-legend" class="source-legend show-origins" hidden></ul>
+      </div>
+      <div class="separator" role="presentation"></div>
+      <div class="window-pane result-sheet">
+        <p id="empty-result" class="empty-result">원문을 넣고 [잘라 섞기]를 누르면 여기에 결과가 나옵니다.</p>
+        <div id="result" class="result" hidden></div>
+        <p id="result-help" class="field-help result-help" hidden>줄을 누르면 다시 섞기·잠그기·편집·모으기 메뉴가 열립니다. 줄에 초점을 두고 <kbd>R</kbd> <kbd>L</kbd> <kbd>E</kbd> <kbd>C</kbd> 키로도 할 수 있어요.</p>
+      </div>
+      <div class="status-bar">
+        <span id="result-count"></span>
+        <span id="storage-status" class="storage-status"></span>
+      </div>
+    </section>
+
+    <section id="collection" class="window collection-panel" aria-labelledby="collection-title">
+      <div class="title-bar"><h2 id="collection-title" class="title">모은 줄</h2></div>
+      <div class="toolbar">
+        <button id="copy-collection" class="btn" type="button" disabled>모은 글 복사</button>
+        <button id="collection-to-column" class="btn" type="button" disabled>원문 칸에 넣기</button>
+      </div>
+      <div class="window-pane">
+        <p id="collection-empty" class="field-help">섞은 줄을 열고 [줄 모으기]를 누르면 여기에 쌓입니다.</p>
         <ol id="collection-items" class="collection-items"></ol>
-      </section>
-    </main>
-  </div>
-
-  <dialog id="sample-dialog" class="compare-dialog sample-dialog" aria-labelledby="sample-title">
-    <div class="panel-header">
-      <h2 id="sample-title">예나 낭만주의 예문</h2>
-      <form method="dialog">
-        <button class="copy-button" type="submit">닫기</button>
-      </form>
-    </div>
-    <form id="sample-form">
-      <div class="sample-options">
-        <div class="sample-choice">
-          <label for="sample-first">첫 번째 원문</label>
-          <div class="select-box"><select id="sample-first"></select></div>
-          <p class="sample-excerpt" tabindex="0" aria-label="첫 번째 발췌 미리보기"></p>
-          <p class="field-help sample-credit"></p>
-          <a class="sample-source" target="_blank" rel="noopener noreferrer">독일어 원문</a>
-        </div>
-        <div class="sample-choice" id="sample-second-choice" hidden>
-          <label for="sample-second">두 번째 원문</label>
-          <div class="select-box"><select id="sample-second"></select></div>
-          <p class="sample-excerpt" tabindex="0" aria-label="두 번째 발췌 미리보기"></p>
-          <p class="field-help sample-credit"></p>
-          <a class="sample-source" target="_blank" rel="noopener noreferrer">독일어 원문</a>
-        </div>
       </div>
-      <div class="sample-actions row-actions">
-        <button class="mix-button" type="submit">원문에 넣고 섞기</button>
+    </section>
+
+    <p id="notice" class="notice" role="status"></p>
+  </main>
+
+  <dialog id="sample-dialog" class="window dialog" aria-labelledby="sample-title">
+    <div class="title-bar"><h2 id="sample-title" class="title">예나 낭만주의 예문</h2></div>
+    <form id="sample-form" class="window-pane">
+      <p class="field-help">칸마다 넣을 예문을 고르세요. ‘바꾸지 않음’인 칸은 그대로 둡니다.</p>
+      <div id="sample-choices" class="sample-options"></div>
+      <div class="form-actions">
+        <button id="sample-cancel" class="btn" type="button">취소</button>
+        <span class="default-ring"><button class="btn" type="submit">원문에 넣고 섞기</button></span>
       </div>
     </form>
   </dialog>
 
-  <dialog id="compare-dialog" class="compare-dialog" aria-labelledby="compare-title">
-    <div class="panel-header">
-      <h2 id="compare-title">후보 3개 비교</h2>
-      <form method="dialog">
-        <button class="copy-button" type="submit">닫기</button>
+  <dialog id="compare-dialog" class="window dialog" aria-labelledby="compare-title">
+    <div class="title-bar"><h2 id="compare-title" class="title">후보 3개 비교</h2></div>
+    <div class="window-pane">
+      <div id="compare-candidates" class="compare-candidates"></div>
+      <form method="dialog" class="form-actions">
+        <button class="btn" type="submit">닫기</button>
       </form>
     </div>
-    <div id="compare-candidates" class="compare-candidates"></div>
+  </dialog>
+
+  <dialog id="confirm-dialog" class="window dialog alert-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-detail">
+    <div class="window-pane alert-pane">
+      <span class="alert-icon" aria-hidden="true">!</span>
+      <div>
+        <h2 id="confirm-title" class="alert-title"></h2>
+        <p id="confirm-detail" class="field-help"></p>
+      </div>
+    </div>
+    <form method="dialog" class="form-actions alert-actions">
+      <button class="btn" type="submit" value="cancel" autofocus>취소</button>
+      <span class="default-ring"><button id="confirm-ok" class="btn" type="submit" value="ok"></button></span>
+    </form>
+  </dialog>
+
+  <dialog id="card-dialog" class="window dialog card-dialog" aria-labelledby="card-title">
+    <div class="title-bar"><h2 id="card-title" class="title">작업 카드</h2></div>
+    <div class="window-pane">
+      <p id="card-number" class="card-number"></p>
+      <p id="card-text" class="card-text"></p>
+      <form method="dialog" class="form-actions">
+        <button id="card-next" class="btn" type="button">한 장 더</button>
+        <span class="default-ring"><button class="btn" type="submit">닫기</button></span>
+      </form>
+    </div>
+  </dialog>
+
+  <dialog id="help-dialog" class="window dialog" aria-labelledby="help-title">
+    <div class="title-bar"><h2 id="help-title" class="title">도움말</h2></div>
+    <div class="window-pane help-pane">
+      <h3>단축키</h3>
+      <table class="shortcut-table">
+        <tbody>
+          <tr><th scope="row"><kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>Enter</kbd></th><td>잘라 섞기</td></tr>
+          <tr><th scope="row"><kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>Z</kbd></th><td>실행 취소 (글 입력 칸 밖에서)</td></tr>
+          <tr><th scope="row"><kbd>⇧</kbd>+<kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>Z</kbd></th><td>다시 실행</td></tr>
+          <tr><th scope="row"><kbd>↑</kbd> <kbd>↓</kbd></th><td>결과 줄 사이 이동</td></tr>
+          <tr><th scope="row"><kbd>R</kbd></th><td>초점 둔 줄만 다시 섞기</td></tr>
+          <tr><th scope="row"><kbd>L</kbd></th><td>줄 잠그기 / 풀기</td></tr>
+          <tr><th scope="row"><kbd>C</kbd></th><td>줄 모으기</td></tr>
+          <tr><th scope="row"><kbd>E</kbd></th><td>줄 편집</td></tr>
+          <tr><th scope="row"><kbd>S</kbd></th><td>줄 소리 내어 읽기</td></tr>
+          <tr><th scope="row"><kbd>?</kbd></th><td>이 도움말</td></tr>
+        </tbody>
+      </table>
+      <h3>작업 순서</h3>
+      <ol class="help-steps">
+        <li>원문 칸(최대 6개)에 글을 넣고, 쓰지 않을 칸은 체크를 끕니다.</li>
+        <li>[잘라 섞기]로 줄을 만들고, 마음에 드는 줄은 잠근 채 나머지를 다시 섞습니다.</li>
+        <li>줄을 열어 조각을 고르면 그 조각만 바꾸거나, 원래 문장을 볼 수 있어요.</li>
+        <li>건진 줄은 [줄 모으기]로 모으고, 모은 줄을 다시 원문 칸에 넣어 한 번 더 섞을 수도 있어요.</li>
+        <li>노트는 브라우저에 저장됩니다. [백업 저장]으로 파일을 받아 두세요.</li>
+      </ol>
+      <form method="dialog" class="form-actions">
+        <span class="default-ring"><button class="btn" type="submit">닫기</button></span>
+      </form>
+    </div>
   </dialog>
 </body>
 </html>
