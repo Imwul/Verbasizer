@@ -1510,6 +1510,14 @@
 
   // ---------- start ----------
 
+  // iOS Safari zooms into fields set below 16px, but the pixel face only stays crisp at 15px.
+  // maximum-scale stops that automatic zoom on iOS while pinch-zoom keeps working.
+  const iOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  if (iOS) {
+    const viewport = document.querySelector('meta[name="viewport"]');
+    viewport.content += ', maximum-scale=1';
+  }
+
   applyTheme();
   if (!book.notes.length) {
     const note = Store.make('첫 노트', defaultData(samples[0].text));
